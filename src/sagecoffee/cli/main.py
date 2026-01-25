@@ -21,6 +21,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+set_app = typer.Typer(help="Configure appliance settings")
+app.add_typer(set_app, name="set")
+
 
 def setup_debug_logging(
     debug: bool = False,
@@ -454,6 +457,174 @@ def sleep_cmd(
         rprint("\n[yellow]Interrupted[/yellow]")
     except typer.Exit:
         raise
+    except Exception as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(EXIT_NETWORK_FAILURE)
+
+
+@set_app.command("volume")
+def set_volume(
+    value: Annotated[
+        int,
+        typer.Option("--value", "-v", help="Beep/sound volume (0-100)", prompt=True),
+    ],
+    serial: Annotated[
+        str | None,
+        typer.Option("--serial", "-s", help="Appliance serial number"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Enable debug logging"),
+    ] = False,
+) -> None:
+    """Set the beep/sound volume."""
+    if value < 0 or value > 100:
+        rprint("[red]Error:[/red] Value must be between 0 and 100.")
+        raise typer.Exit(1)
+
+    if debug:
+        setup_logging(level=10)
+
+    store = get_store()
+    require_config(store)
+
+    async def _run() -> None:
+        async with SageCoffeeClient.from_config(store) as client:
+            await client.set_volume(value, serial)
+            rprint(f"[green]Volume set to {value}.[/green]")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(EXIT_NETWORK_FAILURE)
+
+
+@set_app.command("brightness")
+def set_brightness(
+    value: Annotated[
+        int,
+        typer.Option("--value", "-v", help="Display brightness (0-100)", prompt=True),
+    ],
+    serial: Annotated[
+        str | None,
+        typer.Option("--serial", "-s", help="Appliance serial number"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Enable debug logging"),
+    ] = False,
+) -> None:
+    """Set the display brightness."""
+    if value < 0 or value > 100:
+        rprint("[red]Error:[/red] Value must be between 0 and 100.")
+        raise typer.Exit(1)
+
+    if debug:
+        setup_logging(level=10)
+
+    store = get_store()
+    require_config(store)
+
+    async def _run() -> None:
+        async with SageCoffeeClient.from_config(store) as client:
+            await client.set_brightness(value, serial)
+            rprint(f"[green]Brightness set to {value}.[/green]")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(EXIT_NETWORK_FAILURE)
+
+
+@set_app.command("work-light")
+def set_work_light_brightness(
+    value: Annotated[
+        int,
+        typer.Option("--value", "-v", help="Work light brightness (0-100)", prompt=True),
+    ],
+    serial: Annotated[
+        str | None,
+        typer.Option("--serial", "-s", help="Appliance serial number"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Enable debug logging"),
+    ] = False,
+) -> None:
+    """Set the work light (cup area) brightness."""
+    if value < 0 or value > 100:
+        rprint("[red]Error:[/red] Value must be between 0 and 100.")
+        raise typer.Exit(1)
+
+    if debug:
+        setup_logging(level=10)
+
+    store = get_store()
+    require_config(store)
+
+    async def _run() -> None:
+        async with SageCoffeeClient.from_config(store) as client:
+            await client.set_work_light_brightness(value, serial)
+            rprint(f"[green]Work light brightness set to {value}.[/green]")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(EXIT_NETWORK_FAILURE)
+
+
+@set_app.command("wake-schedule")
+def set_wake_schedule(
+    cron: Annotated[
+        str | None,
+        typer.Option("--cron", "-c", help="Cron expression for wake schedule"),
+    ] = None,
+    disable: Annotated[
+        bool,
+        typer.Option("--disable", help="Disable the wake schedule"),
+    ] = False,
+    enabled: Annotated[
+        bool,
+        typer.Option("--enabled/--disabled", help="Enable or disable when setting a cron", show_default=True),
+    ] = True,
+    serial: Annotated[
+        str | None,
+        typer.Option("--serial", "-s", help="Appliance serial number"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Enable debug logging"),
+    ] = False,
+) -> None:
+    """Configure the wake schedule (cron) or disable it."""
+    if not disable and not cron:
+        rprint("[red]Error:[/red] Provide --cron or use --disable.")
+        raise typer.Exit(1)
+
+    if disable and cron:
+        rprint("[red]Error:[/red] Use either --cron or --disable, not both.")
+        raise typer.Exit(1)
+
+    if debug:
+        setup_logging(level=10)
+
+    store = get_store()
+    require_config(store)
+
+    async def _run() -> None:
+        async with SageCoffeeClient.from_config(store) as client:
+            if disable:
+                await client.disable_wake_schedule(serial)
+                rprint("[green]Wake schedule disabled.[/green]")
+            else:
+                await client.set_wake_schedule(cron or "", enabled, serial)
+                rprint(f"[green]Wake schedule set to '{cron}' (enabled={enabled}).[/green]")
+
+    try:
+        asyncio.run(_run())
     except Exception as e:
         rprint(f"[red]Error:[/red] {e}")
         raise typer.Exit(EXIT_NETWORK_FAILURE)

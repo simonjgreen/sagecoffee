@@ -403,10 +403,45 @@ class SageCoffeeClient:
         return await api.set_coffee_params(appliance.serial_number, params)
 
     # -------------------------------------------------------------------------
-    # Configuration methods - COMMENTED OUT
-    # These methods accept the API calls but don't actually change machine
-    # settings. Held here for potential future functionality.
+    # Configuration methods
     # -------------------------------------------------------------------------
+
+    async def set_volume(self, volume: int, serial: str | None = None) -> dict[str, Any]:
+        """Set the beep/sound volume (0-100)."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_volume(appliance.serial_number, volume)
+
+    async def set_brightness(self, brightness: int, serial: str | None = None) -> dict[str, Any]:
+        """Set the display brightness (0-100)."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_brightness(appliance.serial_number, brightness)
+
+    async def set_work_light_brightness(self, brightness: int, serial: str | None = None) -> dict[str, Any]:
+        """Set the work light (cup warmer) brightness (0-100)."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_work_light_brightness(appliance.serial_number, brightness)
+
+    async def set_wake_schedule(
+        self,
+        cron: str,
+        enabled: bool = True,
+        serial: str | None = None,
+    ) -> dict[str, Any]:
+        """Set wake schedule using cron format (e.g., "20 6 * * 1-5")."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_wake_schedule(appliance.serial_number, cron, enabled)
+
+    async def disable_wake_schedule(self, serial: str | None = None) -> dict[str, Any]:
+        """Disable the wake schedule."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.disable_wake_schedule(appliance.serial_number)
+
+    # The methods below remain disabled until confirmed supported.
     #
     # async def set_grind_size(self, size: int, serial: str | None = None) -> dict[str, Any]:
     #     """Set the grind size (1-45)."""
@@ -426,24 +461,6 @@ class SageCoffeeClient:
     #     api = self._get_api_client()
     #     return await api.set_steam_temp(appliance.serial_number, temp)
     #
-    # async def set_volume(self, volume: int, serial: str | None = None) -> dict[str, Any]:
-    #     """Set the beep/sound volume (0-100)."""
-    #     appliance = await self.get_appliance(serial)
-    #     api = self._get_api_client()
-    #     return await api.set_volume(appliance.serial_number, volume)
-    #
-    # async def set_brightness(self, brightness: int, serial: str | None = None) -> dict[str, Any]:
-    #     """Set the display brightness (0-100)."""
-    #     appliance = await self.get_appliance(serial)
-    #     api = self._get_api_client()
-    #     return await api.set_brightness(appliance.serial_number, brightness)
-    #
-    # async def set_work_light_brightness(self, brightness: int, serial: str | None = None) -> dict[str, Any]:
-    #     """Set the work light (cup warmer) brightness (0-100)."""
-    #     appliance = await self.get_appliance(serial)
-    #     api = self._get_api_client()
-    #     return await api.set_work_light_brightness(appliance.serial_number, brightness)
-    #
     # async def set_auto_off_time(self, minutes: int, serial: str | None = None) -> dict[str, Any]:
     #     """Set the auto-off idle time in minutes."""
     #     appliance = await self.get_appliance(serial)
@@ -455,18 +472,6 @@ class SageCoffeeClient:
     #     appliance = await self.get_appliance(serial)
     #     api = self._get_api_client()
     #     return await api.set_temp_unit(appliance.serial_number, celsius)
-    #
-    # async def set_wake_schedule(self, cron: str, enabled: bool = True, serial: str | None = None) -> dict[str, Any]:
-    #     """Set wake schedule using cron format (e.g., "20 6 * * 1-5")."""
-    #     appliance = await self.get_appliance(serial)
-    #     api = self._get_api_client()
-    #     return await api.set_wake_schedule(appliance.serial_number, cron, enabled)
-    #
-    # async def disable_wake_schedule(self, serial: str | None = None) -> dict[str, Any]:
-    #     """Disable the wake schedule."""
-    #     appliance = await self.get_appliance(serial)
-    #     api = self._get_api_client()
-    #     return await api.disable_wake_schedule(appliance.serial_number)
     #
     # -------------------------------------------------------------------------
 

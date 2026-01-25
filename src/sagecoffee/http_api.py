@@ -240,10 +240,39 @@ class BrevilleApiClient:
         return await self.set_coffee_params(serial, {"state": "asleep"})
 
     # -------------------------------------------------------------------------
-    # Configuration endpoints - COMMENTED OUT
-    # These methods accept the API calls but don't actually change machine
-    # settings. Held here for potential future functionality.
+    # Configuration endpoints
     # -------------------------------------------------------------------------
+
+    async def set_volume(self, serial: str, volume: int) -> dict[str, Any]:
+        """Set the beep/sound volume (0-100)."""
+        logger.info("Setting volume to %d for %s", volume, serial)
+        return await self.set_coffee_params(serial, {"cfg": {"default": {"vol": volume}}})
+
+    async def set_brightness(self, serial: str, brightness: int) -> dict[str, Any]:
+        """Set the display brightness (0-100)."""
+        logger.info("Setting brightness to %d for %s", brightness, serial)
+        return await self.set_coffee_params(serial, {"cfg": {"default": {"brightness": brightness}}})
+
+    async def set_work_light_brightness(self, serial: str, brightness: int) -> dict[str, Any]:
+        """Set the work light (cup warmer) brightness (0-100)."""
+        logger.info("Setting work light brightness to %d for %s", brightness, serial)
+        return await self.set_coffee_params(
+            serial,
+            {"cfg": {"default": {"work_light_brightness": brightness}}},
+        )
+
+    async def set_wake_schedule(self, serial: str, cron: str, enabled: bool = True) -> dict[str, Any]:
+        """Set wake schedule using cron format (e.g., "20 6 * * 1-5" for 6:20 AM weekdays)."""
+        logger.info("Setting wake schedule to '%s' (enabled=%s) for %s", cron, enabled, serial)
+        schedule = [{"cron": cron, "on": enabled}]
+        return await self.set_coffee_params(serial, {"cfg": {"default": {"wake_schedule": schedule}}})
+
+    async def disable_wake_schedule(self, serial: str) -> dict[str, Any]:
+        """Disable the wake schedule."""
+        logger.info("Disabling wake schedule for %s", serial)
+        return await self.set_coffee_params(serial, {"cfg": {"default": {"wake_schedule": []}}})
+
+    # The setters below remain disabled until confirmed supported.
     #
     # async def set_grind_size(self, serial: str, size: int) -> dict[str, Any]:
     #     """Set the grind size (1-45)."""
@@ -260,21 +289,6 @@ class BrevilleApiClient:
     #     logger.info("Setting steam temp to %.1f for %s", temp, serial)
     #     return await self.set_coffee_params(serial, {"cfg": {"default": {"steam_temp": temp}}})
     #
-    # async def set_volume(self, serial: str, volume: int) -> dict[str, Any]:
-    #     """Set the beep/sound volume (0-100)."""
-    #     logger.info("Setting volume to %d for %s", volume, serial)
-    #     return await self.set_coffee_params(serial, {"cfg": {"default": {"vol": volume}}})
-    #
-    # async def set_brightness(self, serial: str, brightness: int) -> dict[str, Any]:
-    #     """Set the display brightness (0-100)."""
-    #     logger.info("Setting brightness to %d for %s", brightness, serial)
-    #     return await self.set_coffee_params(serial, {"cfg": {"default": {"brightness": brightness}}})
-    #
-    # async def set_work_light_brightness(self, serial: str, brightness: int) -> dict[str, Any]:
-    #     """Set the work light (cup warmer) brightness (0-100)."""
-    #     logger.info("Setting work light brightness to %d for %s", brightness, serial)
-    #     return await self.set_coffee_params(serial, {"cfg": {"default": {"work_light_brightness": brightness}}})
-    #
     # async def set_auto_off_time(self, serial: str, minutes: int) -> dict[str, Any]:
     #     """Set the auto-off idle time in minutes."""
     #     logger.info("Setting auto-off time to %d minutes for %s", minutes, serial)
@@ -285,17 +299,6 @@ class BrevilleApiClient:
     #     unit = 0 if celsius else 1
     #     logger.info("Setting temp unit to %s for %s", "Celsius" if celsius else "Fahrenheit", serial)
     #     return await self.set_coffee_params(serial, {"cfg": {"default": {"temp_unit": unit}}})
-    #
-    # async def set_wake_schedule(self, serial: str, cron: str, enabled: bool = True) -> dict[str, Any]:
-    #     """Set wake schedule using cron format (e.g., "20 6 * * 1-5" for 6:20 AM weekdays)."""
-    #     logger.info("Setting wake schedule to '%s' (enabled=%s) for %s", cron, enabled, serial)
-    #     schedule = [{"cron": cron, "on": enabled}]
-    #     return await self.set_coffee_params(serial, {"cfg": {"default": {"wake_schedule": schedule}}})
-    #
-    # async def disable_wake_schedule(self, serial: str) -> dict[str, Any]:
-    #     """Disable the wake schedule."""
-    #     logger.info("Disabling wake schedule for %s", serial)
-    #     return await self.set_coffee_params(serial, {"cfg": {"default": {"wake_schedule": []}}})
     #
     # -------------------------------------------------------------------------
 
