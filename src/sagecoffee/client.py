@@ -418,6 +418,18 @@ class SageCoffeeClient:
         api = self._get_api_client()
         return await api.set_brightness(appliance.serial_number, brightness)
 
+    async def set_color_theme(self, theme: str, serial: str | None = None) -> dict[str, Any]:
+        """Set the display color theme (dark or light)."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_color_theme(appliance.serial_number, theme)
+
+    async def set_appliance_name(self, name: str, serial: str | None = None) -> dict[str, Any]:
+        """Set the appliance name."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_appliance_name(appliance.serial_number, name)
+
     async def set_work_light_brightness(self, brightness: int, serial: str | None = None) -> dict[str, Any]:
         """Set the work light (cup warmer) brightness (0-100)."""
         appliance = await self.get_appliance(serial)

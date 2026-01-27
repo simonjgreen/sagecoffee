@@ -538,6 +538,84 @@ def set_brightness(
         raise typer.Exit(EXIT_NETWORK_FAILURE)
 
 
+@set_app.command("theme")
+def set_theme(
+    theme: Annotated[
+        str,
+        typer.Option("--theme", "-t", help="Display color theme (dark or light)", prompt=True),
+    ],
+    serial: Annotated[
+        str | None,
+        typer.Option("--serial", "-s", help="Appliance serial number"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Enable debug logging"),
+    ] = False,
+) -> None:
+    """Set the display color theme."""
+    normalized = theme.lower().strip()
+    if normalized not in {"dark", "light"}:
+        rprint("[red]Error:[/red] Theme must be 'dark' or 'light'.")
+        raise typer.Exit(1)
+
+    if debug:
+        setup_logging(level=10)
+
+    store = get_store()
+    require_config(store)
+
+    async def _run() -> None:
+        async with SageCoffeeClient.from_config(store) as client:
+            await client.set_color_theme(normalized, serial)
+            rprint(f"[green]Theme set to {normalized}.[/green]")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(EXIT_NETWORK_FAILURE)
+
+
+@set_app.command("name")
+def set_name(
+    name: Annotated[
+        str,
+        typer.Option("--name", "-n", help="Appliance name", prompt=True),
+    ],
+    serial: Annotated[
+        str | None,
+        typer.Option("--serial", "-s", help="Appliance serial number"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Enable debug logging"),
+    ] = False,
+) -> None:
+    """Set the appliance name."""
+    cleaned = name.strip()
+    if not cleaned:
+        rprint("[red]Error:[/red] Name cannot be empty.")
+        raise typer.Exit(1)
+
+    if debug:
+        setup_logging(level=10)
+
+    store = get_store()
+    require_config(store)
+
+    async def _run() -> None:
+        async with SageCoffeeClient.from_config(store) as client:
+            await client.set_appliance_name(cleaned, serial)
+            rprint(f"[green]Appliance name set to '{cleaned}'.[/green]")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(EXIT_NETWORK_FAILURE)
+
+
 @set_app.command("work-light")
 def set_work_light_brightness(
     value: Annotated[
