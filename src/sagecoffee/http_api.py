@@ -283,7 +283,7 @@ class BrevilleApiClient:
     async def disable_wake_schedule(self, serial: str) -> dict[str, Any]:
         """Disable the wake schedule."""
         logger.info("Disabling wake schedule for %s", serial)
-        return await self.set_coffee_params(serial, {"cfg": {"wake_schedule": []}})
+        return await self.set_coffee_params(serial, {"cfg": {"wake_schedule": "none"}})
 
     # The setters below remain disabled until confirmed supported.
     #
