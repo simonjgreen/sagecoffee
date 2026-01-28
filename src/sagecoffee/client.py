@@ -152,6 +152,8 @@ class SageCoffeeClient:
         tokens: TokenSet | None = None,
         store: ConfigStore | None = None,
         app: str = "sageCoffee",
+        httpx_client: Any | None = None,
+        ssl_context: Any | None = None,
     ):
         """
         Initialize the Sage Coffee client.
@@ -162,13 +164,17 @@ class SageCoffeeClient:
             tokens: Optional existing TokenSet
             store: Optional ConfigStore for persistence
             app: App identifier for API requests
+            httpx_client: Optional pre-configured httpx.AsyncClient
+            ssl_context: Optional pre-configured SSL context for WebSocket
         """
         self._client_id = client_id
         self._app = app
         self._store = store
+        self._httpx_client = httpx_client
+        self._ssl_context = ssl_context
 
         # Set up auth client
-        self._auth_client = AuthClient(client_id)
+        self._auth_client = AuthClient(client_id, httpx_client)
 
         # Set up tokens
         if tokens:
@@ -236,6 +242,7 @@ class SageCoffeeClient:
                 get_id_token=self._token_manager.get_id_token,
                 refresh_token_callback=self._token_manager.refresh,
                 app=self._app,
+                http_client=self._httpx_client,
             )
         return self._api_client
 
@@ -245,6 +252,7 @@ class SageCoffeeClient:
             self._ws_client = BrevilleWsClient(
                 get_id_token=self._token_manager.get_id_token,
                 refresh_token_callback=self._token_manager.refresh,
+                ssl_context=self._ssl_context,
             )
         return self._ws_client
 

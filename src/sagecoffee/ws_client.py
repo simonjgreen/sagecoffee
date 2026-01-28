@@ -47,6 +47,7 @@ class BrevilleWsClient:
         on_state: Callable[[DeviceState], None] | None = None,
         on_raw_message: Callable[[dict[str, Any]], None] | None = None,
         ping_interval: int = PING_INTERVAL,
+        ssl_context: Any | None = None,
     ):
         """
         Initialize the WebSocket client.
@@ -57,12 +58,14 @@ class BrevilleWsClient:
             on_state: Callback for state updates
             on_raw_message: Callback for all messages
             ping_interval: Seconds between ping messages
+            ssl_context: Optional pre-configured SSL context
         """
         self._get_id_token = get_id_token
         self._refresh_callback = refresh_token_callback
         self._on_state = on_state
         self._on_raw_message = on_raw_message
         self._ping_interval = ping_interval
+        self._ssl_context = ssl_context
 
         self._ws: ClientConnection | None = None
         self._running = False
@@ -115,12 +118,16 @@ class BrevilleWsClient:
         }
 
         logger.info("Connecting to WebSocket")
-        self._ws = await websockets.connect(
-            WS_URL,
-            additional_headers=headers,
-            ping_interval=None,  # We handle our own pings
-            ping_timeout=None,
-        )
+        # Use provided SSL context or let websockets handle it
+        connect_kwargs = {
+            "additional_headers": headers,
+            "ping_interval": None,  # We handle our own pings
+            "ping_timeout": None,
+        }
+        if self._ssl_context is not None:
+            connect_kwargs["ssl"] = self._ssl_context
+
+        self._ws = await websockets.connect(WS_URL, **connect_kwargs)
         logger.info("WebSocket connected")
 
         # Reset reconnect delay on successful connect
