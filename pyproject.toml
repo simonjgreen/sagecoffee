@@ -50,6 +50,12 @@ Repository = "https://github.com/simonjgreen/sagecoffee"
 [tool.hatch.build.targets.wheel]
 packages = ["src/sagecoffee"]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

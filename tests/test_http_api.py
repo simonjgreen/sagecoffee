@@ -181,3 +181,199 @@ class TestBrevilleApiClient:
         body = json.loads(captured_body)
         assert body["state"] == "ready"
         assert body["custom"] == "value"
+    @pytest.mark.asyncio
+    async def test_set_volume(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test set_volume command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.set_volume("ABC123", 50)
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["vol"] == 50
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_brightness(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test set_brightness command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.set_brightness("ABC123", 75)
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["brightness"] == 75
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_color_theme(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test set_color_theme command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.set_color_theme("ABC123", "dark")
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["theme"] == "dark"
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_appliance_name(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test set_appliance_name command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.set_appliance_name("ABC123", "Kitchen Brewer")
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["applianceName"] == "Kitchen Brewer"
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_work_light_brightness(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test set_work_light_brightness command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.set_work_light_brightness("ABC123", 100)
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["work_light_brightness"] == 100
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_wake_schedule(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test set_wake_schedule command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.set_wake_schedule("ABC123", "20 6 * * 1-5", enabled=True)
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["wake_schedule"][0]["cron"] == "20 6 * * 1-5"
+        assert body["cfg"]["wake_schedule"][0]["on"] is True
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_disable_wake_schedule(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test disable_wake_schedule command."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        result = await client.disable_wake_schedule("ABC123")
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["wake_schedule"] == []
+        assert result == {"success": True}
