@@ -290,7 +290,7 @@ class TestBrevilleApiClient:
         import json
 
         body = json.loads(captured_body)
-        assert body["cfg"]["applianceName"] == "Kitchen Brewer"
+        assert body["applianceName"] == "Kitchen Brewer"
         assert result == {"success": True}
 
     @pytest.mark.asyncio
