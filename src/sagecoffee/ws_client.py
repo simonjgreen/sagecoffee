@@ -79,7 +79,6 @@ class BrevilleWsClient:
 
         # Tasks
         self._ping_task: asyncio.Task[None] | None = None
-        self._receive_task: asyncio.Task[None] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -317,6 +316,25 @@ class BrevilleWsClient:
 
         logger.info("WebSocket disconnected")
 
+    async def _cancel_ping_task(self) -> None:
+        """Cancel and await the ping task if it exists."""
+        if self._ping_task:
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._ping_task = None
+
+    async def _close_ws(self) -> None:
+        """Close the WebSocket connection if open."""
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
     async def listen(self, auto_reconnect: bool = True) -> AsyncIterator[dict[str, Any]]:
         """
         Listen for messages from the WebSocket.
@@ -332,43 +350,46 @@ class BrevilleWsClient:
         """
         self._running = True
 
-        while self._running:
-            try:
-                # Connect if not connected
-                if not self._ws:
-                    await self._connect()
+        try:
+            while self._running:
+                try:
+                    # Connect if not connected
+                    if not self._ws:
+                        await self._connect()
 
-                    # Register all appliances
-                    for serial, app, model in self._appliances:
-                        await self.add_appliance(serial, app, model)
+                        # Register all appliances
+                        for serial, app, model in self._appliances:
+                            await self.add_appliance(serial, app, model)
 
-                # Start ping task
-                self._ping_task = asyncio.create_task(self._ping_loop())
+                    # Start ping task
+                    self._ping_task = asyncio.create_task(self._ping_loop())
 
-                # Receive messages
-                async for message in self._receive_loop():
-                    yield message
+                    # Receive messages
+                    async for message in self._receive_loop():
+                        yield message
 
-            except websockets.ConnectionClosed:
-                self._ws = None
-                if self._ping_task:
-                    self._ping_task.cancel()
+                except websockets.ConnectionClosed:
+                    self._ws = None
+                    await self._cancel_ping_task()
 
-                if not auto_reconnect or not self._running:
-                    break
+                    if not auto_reconnect or not self._running:
+                        break
 
-                await self._reconnect_with_backoff()
+                    await self._reconnect_with_backoff()
 
-            except Exception as e:
-                logger.error("Unexpected error: %s", e)
-                self._ws = None
-                if self._ping_task:
-                    self._ping_task.cancel()
+                except Exception as e:
+                    logger.error("Unexpected error: %s", e)
+                    await self._cancel_ping_task()
+                    await self._close_ws()
 
-                if not auto_reconnect or not self._running:
-                    raise
+                    if not auto_reconnect or not self._running:
+                        raise
 
-                await self._reconnect_with_backoff()
+                    await self._reconnect_with_backoff()
+        finally:
+            # Ensure cleanup on any exit (CancelledError, GeneratorExit, etc.)
+            await self._cancel_ping_task()
+            await self._close_ws()
 
     async def listen_states(self, auto_reconnect: bool = True) -> AsyncIterator[DeviceState]:
         """
