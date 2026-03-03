@@ -109,6 +109,9 @@ class BrevilleWsClient:
 
     async def _connect(self) -> None:
         """Establish WebSocket connection."""
+        # Close any existing connection to prevent resource leaks
+        await self._close_ws()
+
         id_token = await self._get_id_token()
 
         headers = {
@@ -122,6 +125,7 @@ class BrevilleWsClient:
             "additional_headers": headers,
             "ping_interval": None,  # We handle our own pings
             "ping_timeout": None,
+            "max_queue": 16,  # Bound internal message buffer to prevent unbounded growth
         }
         if self._ssl_context is not None:
             connect_kwargs["ssl"] = self._ssl_context
@@ -396,6 +400,8 @@ class BrevilleWsClient:
         Listen for state updates only.
 
         Convenience method that yields only DeviceState objects.
+        Reuses the DeviceState already parsed by _handle_message() to avoid
+        double-parsing every stateReport.
 
         Args:
             auto_reconnect: Whether to automatically reconnect
@@ -405,11 +411,9 @@ class BrevilleWsClient:
         """
         async for message in self.listen(auto_reconnect):
             if message.get("messageType") == "stateReport":
-                try:
-                    report = StateReport.model_validate(message)
-                    yield DeviceState.from_state_report(report)
-                except Exception as e:
-                    logger.warning("Failed to parse state report: %s", e)
+                serial = message.get("serialNumber")
+                if serial and serial in self._state_cache:
+                    yield self._state_cache[serial]
 
     async def send_raw(self, message: dict[str, Any]) -> None:
         """
