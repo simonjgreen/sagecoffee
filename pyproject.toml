@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "sagecoffee"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Python library and CLI for controlling Breville/Sage coffee machines"
 readme = "README.md"
 license = "MIT"
@@ -46,6 +46,9 @@ sagectl = "sagecoffee.cli.main:app"
 [project.urls]
 Homepage = "https://github.com/simonjgreen/sagecoffee"
 Repository = "https://github.com/simonjgreen/sagecoffee"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sagecoffee"]

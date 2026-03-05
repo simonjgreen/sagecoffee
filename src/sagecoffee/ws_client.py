@@ -79,7 +79,6 @@ class BrevilleWsClient:
 
         # Tasks
         self._ping_task: asyncio.Task[None] | None = None
-        self._receive_task: asyncio.Task[None] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -110,6 +109,9 @@ class BrevilleWsClient:
 
     async def _connect(self) -> None:
         """Establish WebSocket connection."""
+        # Close any existing connection to prevent resource leaks
+        await self._close_ws()
+
         id_token = await self._get_id_token()
 
         headers = {
@@ -123,6 +125,7 @@ class BrevilleWsClient:
             "additional_headers": headers,
             "ping_interval": None,  # We handle our own pings
             "ping_timeout": None,
+            "max_queue": 16,  # Bound internal message buffer to prevent unbounded growth
         }
         if self._ssl_context is not None:
             connect_kwargs["ssl"] = self._ssl_context
@@ -317,6 +320,25 @@ class BrevilleWsClient:
 
         logger.info("WebSocket disconnected")
 
+    async def _cancel_ping_task(self) -> None:
+        """Cancel and await the ping task if it exists."""
+        if self._ping_task:
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._ping_task = None
+
+    async def _close_ws(self) -> None:
+        """Close the WebSocket connection if open."""
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
     async def listen(self, auto_reconnect: bool = True) -> AsyncIterator[dict[str, Any]]:
         """
         Listen for messages from the WebSocket.
@@ -332,69 +354,64 @@ class BrevilleWsClient:
         """
         self._running = True
 
-        while self._running:
-            try:
-                # Connect if not connected
-                if not self._ws:
-                    await self._connect()
+        try:
+            while self._running:
+                try:
+                    # Connect if not connected
+                    if not self._ws:
+                        await self._connect()
 
-                    # Register all appliances
-                    for serial, app, model in self._appliances:
-                        await self.add_appliance(serial, app, model)
+                        # Register all appliances
+                        for serial, app, model in self._appliances:
+                            await self.add_appliance(serial, app, model)
 
-                # Start ping task
-                self._ping_task = asyncio.create_task(self._ping_loop())
+                    # Start ping task
+                    self._ping_task = asyncio.create_task(self._ping_loop())
 
-                # Receive messages
-                async for message in self._receive_loop():
-                    yield message
+                    # Receive messages
+                    async for message in self._receive_loop():
+                        yield message
 
-                # _receive_loop() returned normally: websockets silently swallows
-                # ConnectionClosedOK so the async-for exits without raising.
-                # Fall through to shared cleanup below.
-                logger.info("WebSocket receive loop ended cleanly")
+                    # _receive_loop() returned normally: websockets silently swallows
+                    # ConnectionClosedOK so the async-for exits without raising.
+                    # Fall through to shared cleanup below.
+                    logger.info("WebSocket receive loop ended cleanly")
 
-            except websockets.ConnectionClosed:
-                # Connection closed (with error or timeout) — fall through to cleanup.
-                pass
+                except websockets.ConnectionClosed:
+                    # Connection closed (with error or timeout) — fall through to cleanup.
+                    pass
 
-            except Exception as e:
-                logger.error("Unexpected error: %s", e)
-                self._ws = None
-                if self._ping_task:
-                    self._ping_task.cancel()
-                    try:
-                        await self._ping_task
-                    except asyncio.CancelledError:
-                        pass
-                    self._ping_task = None
+                except Exception as e:
+                    logger.error("Unexpected error: %s", e)
+                    await self._cancel_ping_task()
+                    await self._close_ws()
+
+                    if not auto_reconnect or not self._running:
+                        raise
+
+                    await self._reconnect_with_backoff()
+                    continue
+
+                # Shared cleanup for normal exit and ConnectionClosed.
+                await self._cancel_ping_task()
+                await self._close_ws()
 
                 if not auto_reconnect or not self._running:
-                    raise
+                    break
 
                 await self._reconnect_with_backoff()
-                continue
-
-            # Shared cleanup for normal exit and ConnectionClosed.
-            self._ws = None
-            if self._ping_task:
-                self._ping_task.cancel()
-                try:
-                    await self._ping_task
-                except asyncio.CancelledError:
-                    pass
-                self._ping_task = None
-
-            if not auto_reconnect or not self._running:
-                break
-
-            await self._reconnect_with_backoff()
+        finally:
+            # Ensure cleanup on any exit (CancelledError, GeneratorExit, etc.)
+            await self._cancel_ping_task()
+            await self._close_ws()
 
     async def listen_states(self, auto_reconnect: bool = True) -> AsyncIterator[DeviceState]:
         """
         Listen for state updates only.
 
         Convenience method that yields only DeviceState objects.
+        Reuses the DeviceState already parsed by _handle_message() to avoid
+        double-parsing every stateReport.
 
         Args:
             auto_reconnect: Whether to automatically reconnect
@@ -404,11 +421,9 @@ class BrevilleWsClient:
         """
         async for message in self.listen(auto_reconnect):
             if message.get("messageType") == "stateReport":
-                try:
-                    report = StateReport.model_validate(message)
-                    yield DeviceState.from_state_report(report)
-                except Exception as e:
-                    logger.warning("Failed to parse state report: %s", e)
+                serial = message.get("serialNumber")
+                if serial and serial in self._state_cache:
+                    yield self._state_cache[serial]
 
     async def send_raw(self, message: dict[str, Any]) -> None:
         """
