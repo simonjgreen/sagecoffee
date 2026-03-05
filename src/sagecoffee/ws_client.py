@@ -119,7 +119,7 @@ class BrevilleWsClient:
             "Origin": WS_ORIGIN,
         }
 
-        logger.info("Connecting to WebSocket")
+        logger.debug("Connecting to WebSocket")
         # Use provided SSL context or let websockets handle it
         connect_kwargs = {
             "additional_headers": headers,
@@ -131,7 +131,7 @@ class BrevilleWsClient:
             connect_kwargs["ssl"] = self._ssl_context
 
         self._ws = await websockets.connect(WS_URL, **connect_kwargs)
-        logger.info("WebSocket connected")
+        logger.debug("WebSocket connected")
 
         # Reset reconnect delay on successful connect
         self._reconnect_delay = RECONNECT_BASE_DELAY
@@ -261,7 +261,7 @@ class BrevilleWsClient:
                     logger.warning("Invalid JSON message: %s", e)
 
         except websockets.ConnectionClosed as e:
-            logger.info("WebSocket closed: %s", e)
+            logger.debug("WebSocket closed: %s", e)
             raise
         except Exception as e:
             logger.error("WebSocket error: %s", e)
@@ -273,7 +273,7 @@ class BrevilleWsClient:
         jitter = random.uniform(0, RECONNECT_JITTER * self._reconnect_delay)
         delay = self._reconnect_delay + jitter
 
-        logger.info("Reconnecting in %.1f seconds", delay)
+        logger.debug("Reconnecting in %.1f seconds", delay)
         await asyncio.sleep(delay)
 
         # Increase delay for next time (exponential backoff)
@@ -318,7 +318,7 @@ class BrevilleWsClient:
         self._state_cache.clear()
         self._appliances.clear()
 
-        logger.info("WebSocket disconnected")
+        logger.debug("WebSocket disconnected")
 
     async def _cancel_ping_task(self) -> None:
         """Cancel and await the ping task if it exists."""
@@ -375,7 +375,7 @@ class BrevilleWsClient:
                     # _receive_loop() returned normally: websockets silently swallows
                     # ConnectionClosedOK so the async-for exits without raising.
                     # Fall through to shared cleanup below.
-                    logger.info("WebSocket receive loop ended cleanly")
+                    logger.debug("WebSocket receive loop ended cleanly")
 
                 except websockets.ConnectionClosed:
                     # Connection closed (with error or timeout) — fall through to cleanup.
