@@ -372,14 +372,14 @@ class BrevilleWsClient:
                     async for message in self._receive_loop():
                         yield message
 
+                    # _receive_loop() returned normally: websockets silently swallows
+                    # ConnectionClosedOK so the async-for exits without raising.
+                    # Fall through to shared cleanup below.
+                    logger.info("WebSocket receive loop ended cleanly")
+
                 except websockets.ConnectionClosed:
-                    self._ws = None
-                    await self._cancel_ping_task()
-
-                    if not auto_reconnect or not self._running:
-                        break
-
-                    await self._reconnect_with_backoff()
+                    # Connection closed (with error or timeout) — fall through to cleanup.
+                    pass
 
                 except Exception as e:
                     logger.error("Unexpected error: %s", e)
@@ -390,6 +390,16 @@ class BrevilleWsClient:
                         raise
 
                     await self._reconnect_with_backoff()
+                    continue
+
+                # Shared cleanup for normal exit and ConnectionClosed.
+                await self._cancel_ping_task()
+                await self._close_ws()
+
+                if not auto_reconnect or not self._running:
+                    break
+
+                await self._reconnect_with_backoff()
         finally:
             # Ensure cleanup on any exit (CancelledError, GeneratorExit, etc.)
             await self._cancel_ping_task()
