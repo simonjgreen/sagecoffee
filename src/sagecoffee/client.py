@@ -77,7 +77,7 @@ class TokenManager:
                 raise ValueError("No tokens available")
 
             if self._tokens.is_expired(self._skew_seconds):
-                logger.info("Token expired, refreshing")
+                logger.debug("Token expired, refreshing")
                 await self._refresh()
 
             if not self._tokens.id_token:
@@ -100,7 +100,7 @@ class TokenManager:
                 raise ValueError("No tokens available")
 
             if self._tokens.is_expired(self._skew_seconds):
-                logger.info("Token expired, refreshing")
+                logger.debug("Token expired, refreshing")
                 await self._refresh()
 
             if not self._tokens.access_token:
@@ -128,7 +128,7 @@ class TokenManager:
 
         new_tokens = await self._auth_client.refresh(self._tokens.refresh_token)
         self.tokens = new_tokens
-        logger.info("Tokens refreshed successfully")
+        logger.debug("Tokens refreshed successfully")
 
     def auth0_sub(self) -> str | None:
         """Get the Auth0 subject from current tokens."""
