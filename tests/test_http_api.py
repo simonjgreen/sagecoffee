@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from sagecoffee.http_api import BrevilleApiClient
+from sagecoffee.client import SageCoffeeClient
+from sagecoffee.http_api import DEFAULT_APP, BrevilleApiClient, SyncBrevilleApiClient
 from tests.mocks.http_mock import create_mock_client
 
 
@@ -153,6 +154,30 @@ class TestBrevilleApiClient:
         assert captured_headers.get("sf-id-token") == "test_id_token"
         assert captured_headers.get("app") == "testApp"
         assert captured_headers.get("content-type") == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_app_none_falls_back_to_default(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test that app=None sends the default identifier instead of a None header."""
+        captured_headers = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_headers.update(dict(request.headers))
+            return httpx.Response(200, json={})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            app=None,
+            http_client=http_client,
+        )
+
+        await client.wake("ABC123")
+
+        assert captured_headers.get("app") == DEFAULT_APP
 
     @pytest.mark.asyncio
     async def test_set_coffee_params(
@@ -377,3 +402,32 @@ class TestBrevilleApiClient:
         body = json.loads(captured_body)
         assert body["cfg"]["wake_schedule"] == []
         assert result == {"success": True}
+
+class TestSyncBrevilleApiClient:
+    """Tests for SyncBrevilleApiClient."""
+
+    def test_app_none_falls_back_to_default(self) -> None:
+        """Test that app=None yields the default identifier in headers."""
+        client = SyncBrevilleApiClient(id_token="test_id_token", app=None)
+
+        headers = client._get_headers()
+
+        assert headers["app"] == DEFAULT_APP
+
+
+class TestSageCoffeeClientApp:
+    """Tests for app identifier handling in SageCoffeeClient."""
+
+    def test_app_none_falls_back_to_default(self) -> None:
+        """Test that app=None is normalised to the default identifier."""
+        client = SageCoffeeClient(client_id="test_client", refresh_token="test_refresh", app=None)
+
+        assert client._app == DEFAULT_APP
+
+    def test_app_is_preserved(self) -> None:
+        """Test that an explicit app identifier is preserved."""
+        client = SageCoffeeClient(
+            client_id="test_client", refresh_token="test_refresh", app="brevilleCoffee"
+        )
+
+        assert client._app == "brevilleCoffee"
