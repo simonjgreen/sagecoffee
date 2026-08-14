@@ -32,7 +32,7 @@ class BrevilleApiClient:
         self,
         get_id_token: Callable[[], Awaitable[str]],
         refresh_token_callback: Callable[[], Awaitable[None]] | None = None,
-        app: str = DEFAULT_APP,
+        app: str | None = DEFAULT_APP,
         http_client: httpx.AsyncClient | None = None,
     ):
         """
@@ -41,12 +41,14 @@ class BrevilleApiClient:
         Args:
             get_id_token: Async callable that returns the current id_token
             refresh_token_callback: Async callable to refresh tokens on 401
-            app: App identifier for requests
+            app: App identifier for requests (None falls back to DEFAULT_APP)
             http_client: Optional httpx client (for testing)
         """
         self._get_id_token = get_id_token
         self._refresh_callback = refresh_token_callback
-        self._app = app
+        # A None app would end up as a None header value, which httpx rejects
+        # with an opaque TypeError, so fall back to the default identifier.
+        self._app = app or DEFAULT_APP
         self._http_client = http_client
         self._owns_client = http_client is None
 
@@ -351,17 +353,17 @@ class SyncBrevilleApiClient:
     def __init__(
         self,
         id_token: str,
-        app: str = DEFAULT_APP,
+        app: str | None = DEFAULT_APP,
     ):
         """
         Initialize the sync API client.
 
         Args:
             id_token: The id_token for authentication
-            app: App identifier for requests
+            app: App identifier for requests (None falls back to DEFAULT_APP)
         """
         self._id_token = id_token
-        self._app = app
+        self._app = app or DEFAULT_APP
 
     def _get_headers(self) -> dict[str, str]:
         """Get the required headers for API requests."""

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from sagecoffee.auth import AuthClient
-from sagecoffee.http_api import BrevilleApiClient
+from sagecoffee.http_api import DEFAULT_APP, BrevilleApiClient
 from sagecoffee.logging import get_logger
 from sagecoffee.models import Appliance, DeviceState, TokenSet
 from sagecoffee.store import ConfigStore
@@ -151,7 +151,7 @@ class SageCoffeeClient:
         refresh_token: str | None = None,
         tokens: TokenSet | None = None,
         store: ConfigStore | None = None,
-        app: str = "sageCoffee",
+        app: str | None = DEFAULT_APP,
         httpx_client: Any | None = None,
         ssl_context: Any | None = None,
     ):
@@ -163,12 +163,14 @@ class SageCoffeeClient:
             refresh_token: Optional refresh token (creates TokenSet if provided)
             tokens: Optional existing TokenSet
             store: Optional ConfigStore for persistence
-            app: App identifier for API requests
+            app: App identifier for API requests (None falls back to DEFAULT_APP)
             httpx_client: Optional pre-configured httpx.AsyncClient
             ssl_context: Optional pre-configured SSL context for WebSocket
         """
         self._client_id = client_id
-        self._app = app
+        # Callers (e.g. a stale Home Assistant config entry) may pass None here;
+        # normalise it so it never reaches a request header or the WebSocket URL.
+        self._app = app or DEFAULT_APP
         self._store = store
         self._httpx_client = httpx_client
         self._ssl_context = ssl_context
