@@ -152,6 +152,14 @@ class BrevilleApiClient:
                     params=params,
                 )
 
+            logger.debug(
+                "API response: %s %s -> %d (%d bytes)",
+                method,
+                url,
+                response.status_code,
+                len(response.content),
+            )
+
             response.raise_for_status()
 
             # Handle empty responses
@@ -336,6 +344,16 @@ class BrevilleApiClient:
         logger.debug("Listing appliances for user")
         response = await self.request("GET", path)
 
+        # Log the shape of the response so an unexpected wrapper can be told
+        # apart from a genuinely empty account (see issue #21).
+        logger.debug("Appliance list response keys: %s", sorted(response))
+        if "appliances" not in response:
+            logger.warning(
+                "Appliance list response has no 'appliances' key, so no appliances "
+                "can be read; unexpected response shape: %s",
+                redact_dict(response),
+            )
+
         appliances = []
         for item in response.get("appliances", []):
             try:
@@ -424,6 +442,14 @@ class SyncBrevilleApiClient:
         encoded_sub = quote(auth0_sub, safe="")
         path = f"{USER_API_BASE}/user/{encoded_sub}/appliances"
         response = self.request("GET", path)
+
+        logger.debug("Appliance list response keys: %s", sorted(response))
+        if "appliances" not in response:
+            logger.warning(
+                "Appliance list response has no 'appliances' key, so no appliances "
+                "can be read; unexpected response shape: %s",
+                redact_dict(response),
+            )
 
         appliances = []
         for item in response.get("appliances", []):

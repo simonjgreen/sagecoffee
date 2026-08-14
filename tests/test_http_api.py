@@ -1,5 +1,7 @@
 """Tests for the HTTP API client."""
 
+import logging
+from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
@@ -97,6 +99,100 @@ class TestBrevilleApiClient:
         assert len(result) == 2
         assert result[0].serial_number == "A1SKAESA251400639"
         assert result[1].serial_number == "B2TEST123456789"
+
+    @pytest.mark.asyncio
+    async def test_list_appliances_logs_response_keys(
+        self,
+        mock_get_token: AsyncMock,
+        sample_appliances_response: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that a populated response logs its top-level keys and no warning."""
+        http_client = create_mock_client(
+            handler=lambda request: httpx.Response(200, json=sample_appliances_response)
+        )
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="sagecoffee.http_api"):
+            result = await client.list_appliances("auth0|test")
+
+        assert len(result) == 2
+        assert "Appliance list response keys: ['appliances', 'ownedModels']" in caplog.text
+        assert "no 'appliances' key" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_appliances_empty_list(
+        self,
+        mock_get_token: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that an empty appliances list is not treated as an unexpected shape."""
+        http_client = create_mock_client(
+            handler=lambda request: httpx.Response(200, json={"appliances": [], "ownedModels": []})
+        )
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="sagecoffee.http_api"):
+            result = await client.list_appliances("auth0|test")
+
+        assert result == []
+        assert "Appliance list response keys: ['appliances', 'ownedModels']" in caplog.text
+        assert "no 'appliances' key" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_appliances_missing_key_warns(
+        self,
+        mock_get_token: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that a response with no appliances key logs a warning."""
+        http_client = create_mock_client(
+            handler=lambda request: httpx.Response(200, json={"devices": [], "id_token": "secret"})
+        )
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="sagecoffee.http_api"):
+            result = await client.list_appliances("auth0|test")
+
+        assert result == []
+        assert "Appliance list response keys: ['devices', 'id_token']" in caplog.text
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "no 'appliances' key" in warnings[0].getMessage()
+        # The body is logged for diagnosis, but token-like values are redacted.
+        assert "'devices': []" in warnings[0].getMessage()
+        assert "secret" not in warnings[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_request_logs_response_status(
+        self,
+        mock_get_token: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that request logs the response status and size at debug level."""
+        http_client = create_mock_client(handler=lambda request: httpx.Response(200, json={"a": 1}))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="sagecoffee.http_api"):
+            await client.raw_get("/some/path")
+
+        assert "-> 200 (" in caplog.text
 
     @pytest.mark.asyncio
     async def test_retry_on_401(
@@ -413,6 +509,45 @@ class TestSyncBrevilleApiClient:
         headers = client._get_headers()
 
         assert headers["app"] == DEFAULT_APP
+
+    def test_list_appliances_missing_key_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that the sync client also warns on a response with no appliances key."""
+        client = SyncBrevilleApiClient(id_token="test_id_token")
+
+        def fake_request(*args: Any, **kwargs: Any) -> dict:
+            return {"devices": []}
+
+        monkeypatch.setattr(client, "request", fake_request)
+
+        with caplog.at_level(logging.DEBUG, logger="sagecoffee.http_api"):
+            result = client.list_appliances("auth0|test")
+
+        assert result == []
+        assert "Appliance list response keys: ['devices']" in caplog.text
+        assert "no 'appliances' key" in caplog.text
+
+    def test_list_appliances_empty_list(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that the sync client does not warn on a legitimately empty account."""
+        client = SyncBrevilleApiClient(id_token="test_id_token")
+
+        def fake_request(*args: Any, **kwargs: Any) -> dict:
+            return {"appliances": []}
+
+        monkeypatch.setattr(client, "request", fake_request)
+
+        with caplog.at_level(logging.DEBUG, logger="sagecoffee.http_api"):
+            result = client.list_appliances("auth0|test")
+
+        assert result == []
+        assert "no 'appliances' key" not in caplog.text
 
 
 class TestSageCoffeeClientApp:
