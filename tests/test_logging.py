@@ -107,3 +107,43 @@ class TestRedactString:
         result = redact_string(text)
 
         assert result == text
+
+
+class TestRedactingFilter:
+    """Tests for the RedactingFilter logging filter."""
+
+    def _format_through_filter(self, msg: str, *args: object) -> str:
+        import logging
+
+        from sagecoffee.logging import RedactingFilter
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.DEBUG,
+            pathname=__file__,
+            lineno=1,
+            msg=msg,
+            args=args,
+            exc_info=None,
+        )
+        assert RedactingFilter().filter(record) is True
+        return record.getMessage()
+
+    def test_single_dict_argument_is_formatted_and_redacted(self) -> None:
+        """A lone dict argument must be rendered, not iterated as keys."""
+        secret = "abcdefghijklmnopqrstuvwxyz0123456789"
+        message = self._format_through_filter(
+            "Sending: %s", {"action": "addAppliance", "refresh_token": secret}
+        )
+
+        assert "addAppliance" in message
+        assert secret not in message
+        assert message != "Sending: ('action', 'refresh_token')"
+
+    def test_tuple_arguments_are_still_redacted(self) -> None:
+        """Existing tuple handling keeps working."""
+        secret = "abcdefghijklmnopqrstuvwxyz0123456789"
+        message = self._format_through_filter("a=%s b=%s", secret, 42)
+
+        assert secret not in message
+        assert message.endswith("b=42")

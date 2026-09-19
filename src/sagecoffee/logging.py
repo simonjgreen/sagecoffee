@@ -118,7 +118,11 @@ class RedactingFilter(logging.Filter):
         if isinstance(record.msg, str):
             record.msg = redact_string(record.msg)
 
-        if record.args:
+        if isinstance(record.args, dict):
+            # logging stores a lone mapping argument as the args object itself
+            # (for %(key)s style messages); iterating it would yield its keys.
+            record.args = redact_dict(record.args)
+        elif record.args:
             new_args = []
             for arg in record.args:
                 if isinstance(arg, str):
