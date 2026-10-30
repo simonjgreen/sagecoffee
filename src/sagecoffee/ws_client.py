@@ -268,32 +268,41 @@ class BrevilleWsClient:
             raise
 
     async def _reconnect_with_backoff(self) -> None:
-        """Reconnect with exponential backoff and jitter."""
-        # Add jitter
-        jitter = random.uniform(0, RECONNECT_JITTER * self._reconnect_delay)
-        delay = self._reconnect_delay + jitter
+        """Reconnect with exponential backoff and jitter, retrying until connected or stopped."""
+        while self._running:
+            # Add jitter
+            jitter = random.uniform(0, RECONNECT_JITTER * self._reconnect_delay)
+            delay = self._reconnect_delay + jitter
 
-        logger.debug("Reconnecting in %.1f seconds", delay)
-        await asyncio.sleep(delay)
+            logger.debug("Reconnecting in %.1f seconds", delay)
+            await asyncio.sleep(delay)
 
-        # Increase delay for next time (exponential backoff)
-        self._reconnect_delay = min(
-            self._reconnect_delay * 2,
-            RECONNECT_MAX_DELAY,
-        )
+            # Increase delay for next time (exponential backoff)
+            self._reconnect_delay = min(
+                self._reconnect_delay * 2,
+                RECONNECT_MAX_DELAY,
+            )
 
-        # Refresh token if we have a callback
-        if self._refresh_callback:
+            # Refresh token if we have a callback
+            if self._refresh_callback:
+                try:
+                    await self._refresh_callback()
+                except Exception as e:
+                    logger.warning("Token refresh failed: %s", e)
+
+            next_reconnect_delay = self._reconnect_delay
             try:
-                await self._refresh_callback()
+                await self._connect()
+
+                # Re-register all appliances
+                for serial, app, model in self._appliances:
+                    await self.add_appliance(serial, app, model)
+                return
             except Exception as e:
-                logger.warning("Token refresh failed: %s", e)
-
-        await self._connect()
-
-        # Re-register all appliances
-        for serial, app, model in self._appliances:
-            await self.add_appliance(serial, app, model)
+                # _connect() resets the delay before appliance registration can fail.
+                self._reconnect_delay = next_reconnect_delay
+                logger.warning("Reconnect failed: %r", e)
+                await self._close_ws()
 
     async def connect(self) -> None:
         """Connect to the WebSocket server."""

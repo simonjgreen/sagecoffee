@@ -1,5 +1,6 @@
 """Tests for the WebSocket client."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock
 
@@ -145,6 +146,130 @@ class TestBrevilleWsClient:
 
         assert len(raw_messages) == 1
         assert raw_messages[0] == {"test": "message"}
+
+    @pytest.mark.asyncio
+    async def test_reconnect_retries_until_connected(
+        self,
+        mock_get_token: AsyncMock,
+        mock_refresh: AsyncMock,
+        ws_server: MockWebSocketServer,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test a failed reconnect attempt is retried instead of raised."""
+        connect = AsyncMock(
+            side_effect=[TimeoutError(), TimeoutError(), ws_server.create_connection()]
+        )
+        monkeypatch.setattr("sagecoffee.ws_client.websockets.connect", connect)
+
+        client = BrevilleWsClient(get_id_token=mock_get_token, refresh_token_callback=mock_refresh)
+        client._running = True
+        client._reconnect_delay = 0
+        client._appliances.append(("ABC123", "sageCoffee", "BES995"))
+
+        await client._reconnect_with_backoff()
+
+        assert connect.await_count == 3
+        assert mock_refresh.await_count == 3
+        assert client.is_connected
+        assert ws_server.get_add_appliance_messages()[0]["serialNumber"] == "ABC123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_stage", ["connect", "registration"])
+    async def test_reconnect_preserves_backoff_until_fully_connected(
+        self,
+        mock_get_token: AsyncMock,
+        ws_server: MockWebSocketServer,
+        monkeypatch: pytest.MonkeyPatch,
+        failure_stage: str,
+    ) -> None:
+        """Back off across failed attempts and reset only after registration succeeds."""
+        failed_connections = [ws_server.create_connection() for _ in range(7)]
+        for connection in failed_connections:
+            monkeypatch.setattr(connection, "send", AsyncMock(side_effect=TimeoutError()))
+
+        failures = (
+            [TimeoutError() for _ in range(7)] if failure_stage == "connect" else failed_connections
+        )
+        connect = AsyncMock(
+            side_effect=failures + [ws_server.create_connection(), ws_server.create_connection()]
+        )
+        monkeypatch.setattr("sagecoffee.ws_client.websockets.connect", connect)
+        monkeypatch.setattr("sagecoffee.ws_client.random.uniform", lambda *_: 0)
+        delays: list[float] = []
+
+        async def record_delay(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr("sagecoffee.ws_client.asyncio.sleep", record_delay)
+        client = BrevilleWsClient(get_id_token=mock_get_token)
+        client._running = True
+        client._appliances.append(("ABC123", "sageCoffee", "BES995"))
+
+        try:
+            await client._reconnect_with_backoff()
+
+            assert delays == [1, 2, 4, 8, 16, 30, 30, 30]
+            assert client.is_connected
+            assert len(ws_server.get_add_appliance_messages()) == 1
+            if failure_stage == "registration":
+                assert all(connection._closed for connection in failed_connections)
+
+            delays.clear()
+            await client._reconnect_with_backoff()
+
+            assert delays == [1]
+            assert client.is_connected
+            assert len(ws_server.get_add_appliance_messages()) == 2
+        finally:
+            await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_stops_when_client_stopped(
+        self,
+        mock_get_token: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test reconnect retries end once the client is stopped."""
+        client = BrevilleWsClient(get_id_token=mock_get_token)
+        client._running = True
+        client._reconnect_delay = 0
+
+        async def fail_and_stop(*args: object, **kwargs: object) -> None:
+            client._running = False
+            raise TimeoutError()
+
+        connect = AsyncMock(side_effect=fail_and_stop)
+        monkeypatch.setattr("sagecoffee.ws_client.websockets.connect", connect)
+
+        await asyncio.wait_for(client._reconnect_with_backoff(), timeout=1)
+
+        assert connect.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_reconnect_propagates_cancellation(
+        self,
+        mock_get_token: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test cancelling a reconnect mid-connect is not swallowed as a failed attempt."""
+        connecting = asyncio.Event()
+
+        async def hang(*args: object, **kwargs: object) -> None:
+            connecting.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr("sagecoffee.ws_client.websockets.connect", hang)
+
+        client = BrevilleWsClient(get_id_token=mock_get_token)
+        client._running = True
+        client._reconnect_delay = 0
+
+        task = asyncio.create_task(client._reconnect_with_backoff())
+        await connecting.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 class TestMockWebSocketServer:
