@@ -290,6 +290,7 @@ class BrevilleWsClient:
                 except Exception as e:
                     logger.warning("Token refresh failed: %s", e)
 
+            next_reconnect_delay = self._reconnect_delay
             try:
                 await self._connect()
 
@@ -298,6 +299,8 @@ class BrevilleWsClient:
                     await self.add_appliance(serial, app, model)
                 return
             except Exception as e:
+                # _connect() resets the delay before appliance registration can fail.
+                self._reconnect_delay = next_reconnect_delay
                 logger.warning("Reconnect failed: %r", e)
                 await self._close_ws()
 

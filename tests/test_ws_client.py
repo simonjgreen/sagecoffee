@@ -174,6 +174,56 @@ class TestBrevilleWsClient:
         assert ws_server.get_add_appliance_messages()[0]["serialNumber"] == "ABC123"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_stage", ["connect", "registration"])
+    async def test_reconnect_preserves_backoff_until_fully_connected(
+        self,
+        mock_get_token: AsyncMock,
+        ws_server: MockWebSocketServer,
+        monkeypatch: pytest.MonkeyPatch,
+        failure_stage: str,
+    ) -> None:
+        """Back off across failed attempts and reset only after registration succeeds."""
+        failed_connections = [ws_server.create_connection() for _ in range(7)]
+        for connection in failed_connections:
+            monkeypatch.setattr(connection, "send", AsyncMock(side_effect=TimeoutError()))
+
+        failures = (
+            [TimeoutError() for _ in range(7)] if failure_stage == "connect" else failed_connections
+        )
+        connect = AsyncMock(
+            side_effect=failures + [ws_server.create_connection(), ws_server.create_connection()]
+        )
+        monkeypatch.setattr("sagecoffee.ws_client.websockets.connect", connect)
+        monkeypatch.setattr("sagecoffee.ws_client.random.uniform", lambda *_: 0)
+        delays: list[float] = []
+
+        async def record_delay(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr("sagecoffee.ws_client.asyncio.sleep", record_delay)
+        client = BrevilleWsClient(get_id_token=mock_get_token)
+        client._running = True
+        client._appliances.append(("ABC123", "sageCoffee", "BES995"))
+
+        try:
+            await client._reconnect_with_backoff()
+
+            assert delays == [1, 2, 4, 8, 16, 30, 30, 30]
+            assert client.is_connected
+            assert len(ws_server.get_add_appliance_messages()) == 1
+            if failure_stage == "registration":
+                assert all(connection._closed for connection in failed_connections)
+
+            delays.clear()
+            await client._reconnect_with_backoff()
+
+            assert delays == [1]
+            assert client.is_connected
+            assert len(ws_server.get_add_appliance_messages()) == 2
+        finally:
+            await client.disconnect()
+
+    @pytest.mark.asyncio
     async def test_reconnect_stops_when_client_stopped(
         self,
         mock_get_token: AsyncMock,
