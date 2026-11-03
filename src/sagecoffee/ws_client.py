@@ -430,11 +430,18 @@ class BrevilleWsClient:
         Yields:
             DeviceState objects
         """
+        # Each parsed stateReport replaces the cached object, so an unchanged
+        # object means this report failed to parse; don't re-yield the old state.
+        last_yielded: dict[str, DeviceState] = {}
         async for message in self.listen(auto_reconnect):
             if message.get("messageType") == "stateReport":
                 serial = message.get("serialNumber")
-                if serial and serial in self._state_cache:
-                    yield self._state_cache[serial]
+                if not isinstance(serial, str):
+                    continue
+                state = self._state_cache.get(serial)
+                if state is not None and state is not last_yielded.get(serial):
+                    last_yielded[serial] = state
+                    yield state
 
     async def send_raw(self, message: dict[str, Any]) -> None:
         """
