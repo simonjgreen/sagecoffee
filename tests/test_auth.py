@@ -1,10 +1,19 @@
 """Tests for the auth module."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import parse_qs
 
+import httpx
 import pytest
 
-from sagecoffee.auth import decode_jwt_without_verify, get_token_expiry
+from sagecoffee.auth import (
+    MFA_OTP_GRANT_TYPE,
+    AuthClient,
+    MfaRequiredError,
+    decode_jwt_without_verify,
+    get_token_expiry,
+)
 from sagecoffee.models import TokenSet
 
 
@@ -109,3 +118,68 @@ class TestUrlEncoding:
 
         assert encoded == "auth0%7C0058b00000FK4DTAA1"
         assert "|" not in encoded
+
+
+class TestMfaLogin:
+    """Tests for MFA-protected password logins."""
+
+    @staticmethod
+    def _client(handler: Any) -> AuthClient:
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        return AuthClient("test_client", http_client)
+
+    @pytest.mark.asyncio
+    async def test_password_login_raises_mfa_required(self) -> None:
+        """Test that an mfa_required response raises MfaRequiredError with the token."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                403,
+                json={
+                    "error": "mfa_required",
+                    "error_description": "Multifactor authentication required",
+                    "mfa_token": "mfa-token-123",
+                },
+            )
+
+        with pytest.raises(MfaRequiredError) as exc_info:
+            await self._client(handler).password_realm_login("user@example.com", "pw")
+
+        assert exc_info.value.mfa_token == "mfa-token-123"
+
+    @pytest.mark.asyncio
+    async def test_password_login_other_error_is_http_error(self) -> None:
+        """Test that other login failures still raise HTTPStatusError."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, json={"error": "invalid_grant"})
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await self._client(handler).password_realm_login("user@example.com", "pw")
+
+    @pytest.mark.asyncio
+    async def test_mfa_otp_login(self) -> None:
+        """Test completing a login with a one-time code."""
+        captured: dict[str, list[str]] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.update(parse_qs(request.content.decode()))
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "a",
+                    "id_token": "i",
+                    "refresh_token": "r",
+                    "expires_in": 3600,
+                },
+            )
+
+        tokens = await self._client(handler).mfa_otp_login("mfa-token-123", " 123456 ")
+
+        assert captured["grant_type"] == [MFA_OTP_GRANT_TYPE]
+        assert captured["mfa_token"] == ["mfa-token-123"]
+        assert captured["otp"] == ["123456"]
+        assert captured["client_id"] == ["test_client"]
+        assert tokens.refresh_token == "r"
+        assert tokens.expires_in == 3600
+        assert tokens.obtained_at is not None

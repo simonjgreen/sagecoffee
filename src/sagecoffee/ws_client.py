@@ -3,7 +3,7 @@
 import asyncio
 import json
 import random
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import websockets
@@ -414,7 +414,9 @@ class BrevilleWsClient:
             await self._cancel_ping_task()
             await self._close_ws()
 
-    async def listen_states(self, auto_reconnect: bool = True) -> AsyncIterator[DeviceState]:
+    async def listen_states(
+        self, auto_reconnect: bool = True
+    ) -> AsyncGenerator[DeviceState, None]:
         """
         Listen for state updates only.
 
@@ -428,11 +430,18 @@ class BrevilleWsClient:
         Yields:
             DeviceState objects
         """
+        # Each parsed stateReport replaces the cached object, so an unchanged
+        # object means this report failed to parse; don't re-yield the old state.
+        last_yielded: dict[str, DeviceState] = {}
         async for message in self.listen(auto_reconnect):
             if message.get("messageType") == "stateReport":
                 serial = message.get("serialNumber")
-                if serial and serial in self._state_cache:
-                    yield self._state_cache[serial]
+                if not isinstance(serial, str):
+                    continue
+                state = self._state_cache.get(serial)
+                if state is not None and state is not last_yielded.get(serial):
+                    last_yielded[serial] = state
+                    yield state
 
     async def send_raw(self, message: dict[str, Any]) -> None:
         """

@@ -8,7 +8,14 @@ import httpx
 import pytest
 
 from sagecoffee.client import SageCoffeeClient
-from sagecoffee.http_api import DEFAULT_APP, BrevilleApiClient, SyncBrevilleApiClient
+from sagecoffee.http_api import (
+    DEFAULT_APP,
+    BrevilleApiClient,
+    SyncBrevilleApiClient,
+    merge_wake_schedule,
+    same_cron,
+)
+from sagecoffee.models import Appliance, DeviceState
 from tests.mocks.http_mock import create_mock_client
 
 
@@ -467,16 +474,15 @@ class TestBrevilleApiClient:
         import json
 
         body = json.loads(captured_body)
-        assert body["cfg"]["wake_schedule"][0]["cron"] == "20 6 * * 1-5"
-        assert body["cfg"]["wake_schedule"][0]["on"] is True
+        assert body["cfg"]["wake_schedule"] == [{"cron": "20 6 * * 1-5", "on": True}]
         assert result == {"success": True}
 
     @pytest.mark.asyncio
-    async def test_disable_wake_schedule(
+    async def test_set_wake_schedule_keeps_existing(
         self,
         mock_get_token: AsyncMock,
     ) -> None:
-        """Test disable_wake_schedule command."""
+        """Test set_wake_schedule merges into the existing schedules."""
         captured_body = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -491,13 +497,170 @@ class TestBrevilleApiClient:
             http_client=http_client,
         )
 
-        result = await client.disable_wake_schedule("ABC123")
+        existing = [{"cron": "0 8 * * 6,7", "on": True}]
+        await client.set_wake_schedule("ABC123", "20 6 * * 1-5", existing=existing)
 
         import json
 
         body = json.loads(captured_body)
-        assert body["cfg"]["wake_schedule"] == []
+        assert body["cfg"]["wake_schedule"] == [
+            {"cron": "0 8 * * 6,7", "on": True},
+            {"cron": "20 6 * * 1-5", "on": True},
+        ]
+        assert existing == [{"cron": "0 8 * * 6,7", "on": True}]
+
+    @pytest.mark.asyncio
+    async def test_set_wake_schedules_rejects_empty(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test that an empty schedule list is rejected (the appliance ignores it)."""
+        client = BrevilleApiClient(get_id_token=mock_get_token)
+
+        with pytest.raises(ValueError, match="empty"):
+            await client.set_wake_schedules("ABC123", [])
+
+    @pytest.mark.asyncio
+    async def test_disable_wake_schedule(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test disable_wake_schedule turns schedules off instead of removing them."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        existing = [{"cron": "20 6 * * 1-5", "on": True}, {"cron": "0 8 * * 6,7", "on": True}]
+        result = await client.disable_wake_schedule("ABC123", existing)
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["wake_schedule"] == [
+            {"cron": "20 6 * * 1-5", "on": False},
+            {"cron": "0 8 * * 6,7", "on": False},
+        ]
         assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_disable_wake_schedule_single_cron(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test disable_wake_schedule with a cron only turns that schedule off."""
+        captured_body = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_body
+            captured_body = request.content.decode()
+            return httpx.Response(200, json={"success": True})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        existing = [{"cron": "20 6 * * 1-5", "on": True}, {"cron": "00 8 * * 6,7", "on": True}]
+        await client.disable_wake_schedule("ABC123", existing, cron="0 8 * * 6,7")
+
+        import json
+
+        body = json.loads(captured_body)
+        assert body["cfg"]["wake_schedule"] == [
+            {"cron": "20 6 * * 1-5", "on": True},
+            {"cron": "00 8 * * 6,7", "on": False},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_disable_wake_schedule_nothing_to_disable(
+        self,
+        mock_get_token: AsyncMock,
+    ) -> None:
+        """Test disable_wake_schedule sends nothing when there are no schedules."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("No request expected")
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        client = BrevilleApiClient(
+            get_id_token=mock_get_token,
+            http_client=http_client,
+        )
+
+        assert await client.disable_wake_schedule("ABC123", []) is None
+
+
+class TestMergeWakeSchedule:
+    """Tests for merge_wake_schedule."""
+
+    def test_updates_matching_cron(self) -> None:
+        """Test that an entry with the same cron is updated in place."""
+        existing = [{"cron": "20 6 * * 1-5", "on": True}, {"cron": "0 8 * * 6,7", "on": True}]
+
+        merged = merge_wake_schedule(existing, "20 6 * * 1-5", enabled=False)
+
+        assert merged == [
+            {"cron": "20 6 * * 1-5", "on": False},
+            {"cron": "0 8 * * 6,7", "on": True},
+        ]
+        assert existing[0]["on"] is True
+
+    def test_appends_new_cron(self) -> None:
+        """Test that a new cron is appended."""
+        merged = merge_wake_schedule([{"cron": "0 8 * * 6,7", "on": True}], "20 6 * * 1-5")
+
+        assert merged == [
+            {"cron": "0 8 * * 6,7", "on": True},
+            {"cron": "20 6 * * 1-5", "on": True},
+        ]
+
+
+    def test_matches_app_zero_padded_cron(self) -> None:
+        """Test that the app's zero-padded cron matches an unpadded one."""
+        # Shape reported by a BES995 for schedules created in the app.
+        existing = [{"cron": "00 7 * * 1", "on": False}, {"cron": "00 7 * * 2", "on": False}]
+
+        merged = merge_wake_schedule(existing, "0 7 * * 1", enabled=True)
+
+        assert merged == [
+            {"cron": "00 7 * * 1", "on": True},
+            {"cron": "00 7 * * 2", "on": False},
+        ]
+
+
+class TestSameCron:
+    """Tests for same_cron."""
+
+    @pytest.mark.parametrize(
+        ("a", "b", "expected"),
+        [
+            ("00 7 * * 1", "0 7 * * 1", True),
+            ("05 07 * * 1-5", "5 7 * * 1-5", True),
+            ("0 7 * * 1,02", "0 7 * * 1,2", True),
+            ("0  7 * * 1", "0 7 * * 1", True),
+            ("0 7 * * 1", "0 7 * * 2", False),
+            ("0 7 * * 1", None, False),
+            (None, None, False),
+            ("", "", False),
+        ],
+    )
+    def test_same_cron(self, a: Any, b: Any, expected: bool) -> None:
+        """Test cron comparison ignores zero padding and extra whitespace."""
+        assert same_cron(a, b) is expected
+
 
 class TestSyncBrevilleApiClient:
     """Tests for SyncBrevilleApiClient."""
@@ -566,3 +729,70 @@ class TestSageCoffeeClientApp:
         )
 
         assert client._app == "brevilleCoffee"
+
+
+class TestSageCoffeeClientWakeSchedule:
+    """Tests for wake schedule handling in SageCoffeeClient."""
+
+    @staticmethod
+    def _state(schedule: list[dict[str, Any]]) -> DeviceState:
+        return DeviceState(
+            raw_data={"reported": {"cfg": {"default": {"wake_schedule": schedule}}}},
+            serial_number="ABC123",
+        )
+
+    @staticmethod
+    def _client(state: DeviceState | None) -> tuple[SageCoffeeClient, AsyncMock]:
+        client = SageCoffeeClient(client_id="test_client", refresh_token="test_refresh")
+        client._appliances = [Appliance(serialNumber="ABC123", model="BES995")]
+        client.get_last_state = lambda serial=None: state  # type: ignore[method-assign]
+        api = AsyncMock()
+        client._api_client = api
+        return client, api
+
+    @pytest.mark.asyncio
+    async def test_set_wake_schedule_uses_known_schedules(self) -> None:
+        """Test set_wake_schedule passes the known schedules for merging."""
+        existing = [{"cron": "0 8 * * 6,7", "on": True}]
+        client, api = self._client(self._state(existing))
+
+        await client.set_wake_schedule("20 6 * * 1-5", serial="ABC123")
+
+        api.set_wake_schedule.assert_awaited_once_with("ABC123", "20 6 * * 1-5", True, existing)
+
+    @pytest.mark.asyncio
+    async def test_disable_wake_schedule_uses_known_schedules(self) -> None:
+        """Test disable_wake_schedule passes the known schedules."""
+        existing = [{"cron": "0 8 * * 6,7", "on": True}]
+        client, api = self._client(self._state(existing))
+
+        await client.disable_wake_schedule("ABC123")
+
+        api.disable_wake_schedule.assert_awaited_once_with("ABC123", existing, None)
+
+    @pytest.mark.asyncio
+    async def test_fetch_state_waits_for_running_stream(self) -> None:
+        """Test fetch_state waits for an existing stream instead of opening one."""
+        state = self._state([])
+        client, _ = self._client(None)
+        client._ws_client = AsyncMock()
+        calls = 0
+
+        def get_last_state(serial: str | None = None) -> DeviceState | None:
+            nonlocal calls
+            calls += 1
+            return state if calls > 2 else None
+
+        client.get_last_state = get_last_state  # type: ignore[method-assign]
+
+        assert await client.fetch_state("ABC123", timeout=5) is state
+        client._ws_client.connect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fetch_state_times_out(self) -> None:
+        """Test fetch_state raises TimeoutError if no state arrives."""
+        client, _ = self._client(None)
+        client._ws_client = AsyncMock()
+
+        with pytest.raises(TimeoutError):
+            await client.fetch_state("ABC123", timeout=0.3)

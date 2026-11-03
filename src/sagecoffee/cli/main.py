@@ -10,8 +10,9 @@ from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
 
-from sagecoffee.auth import SyncAuthClient
+from sagecoffee.auth import MfaRequiredError, SyncAuthClient
 from sagecoffee.client import SageCoffeeClient
+from sagecoffee.http_api import APPS
 from sagecoffee.logging import redact, setup_logging
 from sagecoffee.store import ConfigStore
 
@@ -96,6 +97,20 @@ def bootstrap(
             help="OAuth client ID (has default, rarely needed)",
         ),
     ] = None,
+    app_id: Annotated[
+        str | None,
+        typer.Option(
+            "--app",
+            help=f"Brand app identifier: {', '.join(APPS)} (default: keep current)",
+        ),
+    ] = None,
+    otp: Annotated[
+        str | None,
+        typer.Option(
+            "--otp",
+            help="One-time code from your authenticator app (prompted if needed)",
+        ),
+    ] = None,
     debug: Annotated[
         bool,
         typer.Option("--debug", help="Enable debug logging"),
@@ -106,6 +121,10 @@ def bootstrap(
 
     This stores the refresh_token for future use. You only need to run this once.
     """
+    if app_id is not None and app_id not in APPS:
+        rprint(f"[red]Error:[/red] --app must be one of: {', '.join(APPS)}")
+        raise typer.Exit(1)
+
     if debug:
         setup_logging(level=10)
 
@@ -114,10 +133,16 @@ def bootstrap(
 
     try:
         auth = SyncAuthClient(cid)
-        tokens = auth.password_realm_login(username, password)
+        try:
+            tokens = auth.password_realm_login(username, password)
+        except MfaRequiredError as mfa:
+            code = otp or typer.prompt("Two-step verification code")
+            tokens = auth.mfa_otp_login(mfa.mfa_token, code)
 
         # Save to config
         store.client_id = cid
+        if app_id is not None:
+            store.app = app_id
         if tokens.refresh_token:
             store.refresh_token = tokens.refresh_token
 
@@ -658,15 +683,27 @@ def set_work_light_brightness(
 def set_wake_schedule(
     cron: Annotated[
         str | None,
-        typer.Option("--cron", "-c", help="Cron expression for wake schedule"),
+        typer.Option(
+            "--cron",
+            "-c",
+            help="Cron expression to add or update; with --disable, the schedule to turn off",
+        ),
     ] = None,
     disable: Annotated[
         bool,
-        typer.Option("--disable", help="Disable the wake schedule"),
+        typer.Option("--disable", help="Turn off all wake schedules (or only --cron)"),
+    ] = False,
+    show: Annotated[
+        bool,
+        typer.Option("--show", help="Show the current wake schedules"),
     ] = False,
     enabled: Annotated[
         bool,
-        typer.Option("--enabled/--disabled", help="Enable or disable when setting a cron", show_default=True),
+        typer.Option(
+            "--enabled/--disabled",
+            help="Enable or disable when setting a cron",
+            show_default=True,
+        ),
     ] = True,
     serial: Annotated[
         str | None,
@@ -677,13 +714,13 @@ def set_wake_schedule(
         typer.Option("--debug", help="Enable debug logging"),
     ] = False,
 ) -> None:
-    """Configure the wake schedule (cron) or disable it."""
-    if not disable and not cron:
-        rprint("[red]Error:[/red] Provide --cron or use --disable.")
-        raise typer.Exit(1)
+    """
+    Add, update or turn off wake schedules (cron).
 
-    if disable and cron:
-        rprint("[red]Error:[/red] Use either --cron or --disable, not both.")
+    Existing schedules, including ones created in the app, are kept.
+    """
+    if sum([bool(cron and not disable), disable, show]) != 1:
+        rprint("[red]Error:[/red] Provide one of --cron, --disable or --show.")
         raise typer.Exit(1)
 
     if debug:
@@ -695,11 +732,20 @@ def set_wake_schedule(
     async def _run() -> None:
         async with SageCoffeeClient.from_config(store) as client:
             if disable:
-                await client.disable_wake_schedule(serial)
-                rprint("[green]Wake schedule disabled.[/green]")
+                if await client.disable_wake_schedule(serial, cron) is None:
+                    rprint("[yellow]No wake schedules to disable.[/yellow]")
+                else:
+                    rprint(f"[green]Wake schedule {cron or '(all)'} disabled.[/green]")
+            elif cron:
+                await client.set_wake_schedule(cron, enabled, serial)
+                rprint(f"[green]Wake schedule '{cron}' set (enabled={enabled}).[/green]")
             else:
-                await client.set_wake_schedule(cron or "", enabled, serial)
-                rprint(f"[green]Wake schedule set to '{cron}' (enabled={enabled}).[/green]")
+                schedules = await client.get_wake_schedule(serial)
+                if not schedules:
+                    rprint("No wake schedules.")
+                for entry in schedules:
+                    status = "on" if entry.get("on") else "off"
+                    rprint(f"  {entry.get('cron')}  ({status})")
 
     try:
         asyncio.run(_run())

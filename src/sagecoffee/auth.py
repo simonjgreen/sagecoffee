@@ -24,6 +24,48 @@ DEFAULT_REALM = "Salesforce"
 DEFAULT_SCOPE = "openid profile email offline_access"
 DEFAULT_AUDIENCE = "https://iden-prod.us.auth0.com/userinfo"
 
+PASSWORD_REALM_GRANT_TYPE = "http://auth0.com/oauth/grant-type/password-realm"
+MFA_OTP_GRANT_TYPE = "http://auth0.com/oauth/grant-type/mfa-otp"
+
+
+class MfaRequiredError(Exception):
+    """Raised when a password login needs a one-time code to complete."""
+
+    def __init__(self, mfa_token: str):
+        """
+        Initialize the error.
+
+        Args:
+            mfa_token: Token to pass to mfa_otp_login with the one-time code
+        """
+        super().__init__("Multi-factor authentication required")
+        self.mfa_token = mfa_token
+
+
+def _raise_for_mfa(response: httpx.Response) -> None:
+    """Raise MfaRequiredError if a login failed only because MFA is required."""
+    if response.is_success:
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        return
+    if isinstance(body, dict) and body.get("error") == "mfa_required" and body.get("mfa_token"):
+        raise MfaRequiredError(body["mfa_token"])
+
+
+def _token_set_from_response(data: dict[str, Any], refresh_token: str | None = None) -> TokenSet:
+    """Build a TokenSet from a token endpoint response."""
+    return TokenSet(
+        access_token=data.get("access_token"),
+        id_token=data.get("id_token"),
+        refresh_token=data.get("refresh_token", refresh_token),
+        expires_in=data.get("expires_in", 86400),
+        token_type=data.get("token_type", "Bearer"),
+        scope=data.get("scope"),
+        obtained_at=_utcnow(),
+    )
+
 
 def decode_jwt_without_verify(token: str) -> dict[str, Any]:
     """
@@ -140,12 +182,13 @@ class AuthClient:
             TokenSet with access_token, id_token, and refresh_token
 
         Raises:
+            MfaRequiredError: If the account needs a one-time code (see mfa_otp_login)
             httpx.HTTPStatusError: If authentication fails
         """
         client = await self._get_client()
 
         payload = {
-            "grant_type": "http://auth0.com/oauth/grant-type/password-realm",
+            "grant_type": PASSWORD_REALM_GRANT_TYPE,
             "realm": realm,
             "scope": scope,
             "audience": audience,
@@ -159,18 +202,42 @@ class AuthClient:
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+        _raise_for_mfa(response)
         response.raise_for_status()
 
-        data = response.json()
-        return TokenSet(
-            access_token=data.get("access_token"),
-            id_token=data.get("id_token"),
-            refresh_token=data.get("refresh_token"),
-            expires_in=data.get("expires_in", 86400),
-            token_type=data.get("token_type", "Bearer"),
-            scope=data.get("scope"),
-            obtained_at=_utcnow(),
+        return _token_set_from_response(response.json())
+
+    async def mfa_otp_login(self, mfa_token: str, otp: str) -> TokenSet:
+        """
+        Complete an MFA-protected login with a one-time code.
+
+        Args:
+            mfa_token: The token from MfaRequiredError
+            otp: The one-time code from the user's authenticator app
+
+        Returns:
+            TokenSet with access_token, id_token, and refresh_token
+
+        Raises:
+            httpx.HTTPStatusError: If the code is rejected
+        """
+        client = await self._get_client()
+
+        payload = {
+            "grant_type": MFA_OTP_GRANT_TYPE,
+            "client_id": self.client_id,
+            "mfa_token": mfa_token,
+            "otp": otp.strip(),
+        }
+
+        response = await client.post(
+            OAUTH_TOKEN_URL,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+        response.raise_for_status()
+
+        return _token_set_from_response(response.json())
 
     async def refresh(
         self,
@@ -262,7 +329,7 @@ class SyncAuthClient:
     ) -> TokenSet:
         """Authenticate using password realm grant (sync version)."""
         payload = {
-            "grant_type": "http://auth0.com/oauth/grant-type/password-realm",
+            "grant_type": PASSWORD_REALM_GRANT_TYPE,
             "realm": realm,
             "scope": scope,
             "audience": audience,
@@ -277,18 +344,29 @@ class SyncAuthClient:
                 data=payload,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
+            _raise_for_mfa(response)
             response.raise_for_status()
 
-            data = response.json()
-            return TokenSet(
-                access_token=data.get("access_token"),
-                id_token=data.get("id_token"),
-                refresh_token=data.get("refresh_token"),
-                expires_in=data.get("expires_in", 86400),
-                token_type=data.get("token_type", "Bearer"),
-                scope=data.get("scope"),
-                obtained_at=_utcnow(),
+            return _token_set_from_response(response.json())
+
+    def mfa_otp_login(self, mfa_token: str, otp: str) -> TokenSet:
+        """Complete an MFA-protected login with a one-time code (sync version)."""
+        payload = {
+            "grant_type": MFA_OTP_GRANT_TYPE,
+            "client_id": self.client_id,
+            "mfa_token": mfa_token,
+            "otp": otp.strip(),
+        }
+
+        with httpx.Client() as client:
+            response = client.post(
+                OAUTH_TOKEN_URL,
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
+            response.raise_for_status()
+
+            return _token_set_from_response(response.json())
 
     def refresh(
         self,

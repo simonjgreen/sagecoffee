@@ -35,7 +35,12 @@ First, you need to authenticate with your Breville account to obtain a refresh t
 ```bash
 # Bootstrap will prompt for your password (never stored)
 sagectl bootstrap --username your.email@example.com
+
+# Breville or Lelit machines: also set the brand's app identifier
+sagectl bootstrap --username your.email@example.com --app brevilleCoffee
 ```
+
+If your account has two-step verification enabled, you will be prompted for the code from your authenticator app (or pass it with `--otp`).
 
 This stores your refresh token in `~/.config/sagecoffee/config.toml` with secure permissions (0600).
 
@@ -93,7 +98,7 @@ All configuration can be provided via environment variables:
 | `SAGECOFFEE_REFRESH_TOKEN` | Refresh token (or use config file) |
 | `SAGECOFFEE_SERIAL` | Appliance serial number (optional, auto-discovered) |
 | `SAGECOFFEE_MODEL` | Appliance model (default: `BES995`) |
-| `SAGECOFFEE_APP` | App identifier (default: `sageCoffee`) |
+| `SAGECOFFEE_APP` | App identifier: `sageCoffee` (default), `brevilleCoffee` or `lelitCoffee` |
 
 ## Configuration File
 
@@ -200,11 +205,45 @@ The `DeviceState` object provides convenient access to appliance state:
 ```python
 state.reported_state      # "asleep", "warming", "ready", etc.
 state.desired_state       # What state was requested
-state.boiler_temps        # List of BoilerState objects
+state.boiler_temps        # List of BoilerState objects (with role "brew"/"steam")
+state.brew_boiler         # Brew BoilerState (index 1 on dual boiler, 0 on single boiler)
+state.steam_boiler        # Steam BoilerState, or None on single boiler machines
+state.is_single_boiler    # Whether the machine reports one boiler
 state.grind_size          # Grinder setting
 state.is_remote_wake_enabled  # Whether remote wake is allowed
 state.timezone            # Configured timezone
+state.wake_schedule       # [{"cron": "20 6 * * 1-5", "on": True}, ...]
+state.errors              # Reported error names, e.g. ["WaterTankEmpty"]
+state.signal_strength     # Reported Wi-Fi signal strength
+state.firmware            # Reported firmware versions
 state.raw_data            # Full raw state dict
+```
+
+## Wake Schedules
+
+The appliance keeps a list of wake schedules (the app can create several). The
+client reads the current list from the state stream and merges into it, so
+schedules created elsewhere are kept:
+
+```python
+await client.set_wake_schedule("20 6 * * 1-5")             # add, or update the same cron
+await client.set_wake_schedule("20 6 * * 1-5", enabled=False)
+await client.disable_wake_schedule()                        # turn all off (kept in the list)
+await client.disable_wake_schedule(cron="20 6 * * 1-5")     # turn one off
+await client.get_wake_schedule()
+```
+
+The appliance ignores an empty schedule list, so schedules are turned off rather than removed.
+
+## Two-Step Verification
+
+```python
+from sagecoffee import MfaRequiredError
+
+try:
+    await client.bootstrap(username, password)
+except MfaRequiredError as err:
+    await client.bootstrap_mfa(err.mfa_token, input("Code: "))
 ```
 
 ## Machine Configuration Defaults
@@ -270,6 +309,7 @@ The WebSocket returns state reports with this structure:
 | `sagectl tail` | Stream state updates |
 | `sagectl wake` | Wake up appliance |
 | `sagectl sleep` | Put appliance to sleep |
+| `sagectl set wake-schedule` | Add/update (`--cron`), turn off (`--disable`) or list (`--show`) wake schedules |
 | `sagectl config` | Show configuration |
 | `sagectl raw ws '...'` | Send raw WebSocket message |
 | `sagectl raw http METHOD /path '...'` | Send raw HTTP request |

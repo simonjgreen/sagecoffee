@@ -136,6 +136,126 @@ class TestDeviceState:
         assert state.timezone is None
 
 
+    def test_dual_boiler_roles(self) -> None:
+        """Test that dual boiler machines report steam at 0 and brew at 1."""
+        state = DeviceState(
+            raw_data={"reported": {"boiler": [{"cur_temp": 140.0}, {"cur_temp": 93.5}]}},
+            serial_number="ABC123",
+        )
+
+        assert state.is_single_boiler is False
+        assert state.steam_boiler is not None
+        assert state.steam_boiler.current_temp == 140.0
+        assert state.brew_boiler is not None
+        assert state.brew_boiler.current_temp == 93.5
+
+    def test_single_boiler_roles(self) -> None:
+        """Test that a single boiler is the brew boiler and there is no steam boiler."""
+        state = DeviceState(
+            raw_data={"reported": {"boiler": [{"cur_temp": 93.5, "temp_sp": 94.0}]}},
+            serial_number="ABC123",
+        )
+
+        assert state.is_single_boiler is True
+        assert state.steam_boiler is None
+        assert state.brew_boiler is not None
+        assert state.brew_boiler.id == "0"
+        assert state.brew_boiler.target_temp == 94.0
+
+    def test_wake_schedule_nested_cfg(self) -> None:
+        """Test reading wake schedules from the nested cfg block."""
+        state = DeviceState(
+            raw_data={
+                "reported": {
+                    "cfg": {
+                        "default": {"wake_schedule": [{"cron": "20 6 * * 1-5", "on": True}, "junk"]}
+                    }
+                }
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.wake_schedule == [{"cron": "20 6 * * 1-5", "on": True}]
+
+    def test_wake_schedule_dotted_cfg(self) -> None:
+        """Test reading wake schedules from the dotted cfg.default key."""
+        state = DeviceState(
+            raw_data={
+                "reported": {"cfg.default": {"wake_schedule": [{"cron": "0 8 * * *", "on": False}]}}
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.wake_schedule == [{"cron": "0 8 * * *", "on": False}]
+
+    def test_errors_signal_strength_firmware(self) -> None:
+        """Test reading errors, Wi-Fi signal strength and firmware."""
+        state = DeviceState(
+            raw_data={
+                "reported": {
+                    "errors": ["WaterTankEmpty"],
+                    "signal_strength": -61,
+                    "firmware": {"appVersion": "1.2.3"},
+                }
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.errors == ["WaterTankEmpty"]
+        assert state.signal_strength == -61
+        assert state.firmware == {"appVersion": "1.2.3"}
+
+    def test_new_properties_empty_state(self) -> None:
+        """Test the newer properties on an empty state."""
+        state = DeviceState(raw_data={}, serial_number="ABC123")
+
+        assert state.wake_schedule == []
+        assert state.errors == []
+        assert state.signal_strength is None
+        assert state.firmware == {}
+        assert state.brew_boiler is None
+        assert state.steam_boiler is None
+        assert state.is_single_boiler is False
+
+    def test_remote_wake_from_nested_cfg(self) -> None:
+        """Test remote wake is read from the nested cfg block too."""
+        state = DeviceState(
+            raw_data={"reported": {"cfg": {"default": {"remote_wake_enable": True}}}},
+            serial_number="ABC123",
+        )
+
+        assert state.is_remote_wake_enabled is True
+
+
+    def test_remote_wake_prefers_pairing(self) -> None:
+        """Test pairing.remote_wake wins over cfg.default (BES995 firmware 2.11.3 shape)."""
+        state = DeviceState(
+            raw_data={
+                "reported": {
+                    "pairing": {"remote_wake": True, "last_paired": 1773334609626},
+                    "cfg": {"default": {"timezone": "Europe/Brussels"}},
+                }
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.is_remote_wake_enabled is True
+
+    def test_remote_wake_disabled_in_pairing(self) -> None:
+        """Test an explicit pairing.remote_wake False is respected."""
+        state = DeviceState(
+            raw_data={
+                "reported": {
+                    "pairing": {"remote_wake": False},
+                    "cfg": {"default": {"remote_wake_enable": True}},
+                }
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.is_remote_wake_enabled is False
+
+
 class TestMessages:
     """Tests for WebSocket message models."""
 

@@ -317,3 +317,27 @@ class TestMockWebSocketServer:
 
         assert len(received) == 2
         assert received[0]["messageType"] == "pong"
+
+
+@pytest.mark.asyncio
+async def test_listen_states_skips_unparseable_report() -> None:
+    """Test a malformed stateReport doesn't re-yield the previous state."""
+
+    def report(steam: float) -> dict:
+        return {
+            "serialNumber": "ABC123",
+            "messageType": "stateReport",
+            "data": {"reported": {"boiler": [{"cur_temp": steam}, {"cur_temp": 93.3}]}},
+        }
+
+    malformed = {"serialNumber": "ABC123", "messageType": "stateReport", "data": "oops"}
+    client = BrevilleWsClient(get_id_token=AsyncMock(return_value="test_id_token"))
+    client._ws = MockWebSocket([report(82.0), report(87.0), malformed, report(131.0)])
+
+    temps = [
+        state.steam_boiler.current_temp
+        async for state in client.listen_states(auto_reconnect=False)
+        if state.steam_boiler is not None
+    ]
+
+    assert temps == [82.0, 87.0, 131.0]
