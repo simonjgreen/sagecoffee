@@ -17,8 +17,32 @@ API_BASE_URL = "https://iot-api.breville.com"
 APPLIANCE_API_BASE = f"{API_BASE_URL}/appliance/v1"
 USER_API_BASE = f"{API_BASE_URL}/user/v2"
 
+# App identifiers, one per brand (sent as the "app" header and WebSocket param)
+APP_SAGE = "sageCoffee"
+APP_BREVILLE = "brevilleCoffee"
+APP_LELIT = "lelitCoffee"
+APPS = (APP_SAGE, APP_BREVILLE, APP_LELIT)
+
 # Default app identifier
-DEFAULT_APP = "sageCoffee"
+DEFAULT_APP = APP_SAGE
+
+
+def merge_wake_schedule(
+    schedules: list[dict[str, Any]], cron: str, enabled: bool = True
+) -> list[dict[str, Any]]:
+    """
+    Add or update one entry in a list of wake schedules.
+
+    An entry with the same cron is updated in place, otherwise a new entry is
+    appended. The input list is not modified.
+    """
+    merged = [dict(s) for s in schedules]
+    for entry in merged:
+        if entry.get("cron") == cron:
+            entry["on"] = enabled
+            return merged
+    merged.append({"cron": cron, "on": enabled})
+    return merged
 
 
 class BrevilleApiClient:
@@ -282,18 +306,58 @@ class BrevilleApiClient:
             {"cfg": {"work_light_brightness": brightness}},
         )
 
-    async def set_wake_schedule(
-        self, serial: str, cron: str, enabled: bool = True
+    async def set_wake_schedules(
+        self, serial: str, schedules: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Set wake schedule using cron format (e.g., "20 6 * * 1-5" for 6:20 AM weekdays)."""
-        logger.info("Setting wake schedule to '%s' (enabled=%s) for %s", cron, enabled, serial)
-        schedule = [{"cron": cron, "on": enabled}]
-        return await self.set_coffee_params(serial, {"cfg": {"wake_schedule": schedule}})
+        """
+        Replace the full list of wake schedules.
 
-    async def disable_wake_schedule(self, serial: str) -> dict[str, Any]:
-        """Disable the wake schedule."""
-        logger.info("Disabling wake schedule for %s", serial)
-        return await self.set_coffee_params(serial, {"cfg": {"wake_schedule": []}})
+        Each entry is {"cron": "20 6 * * 1-5", "on": True}. The appliance
+        ignores an empty list, so schedules cannot be cleared this way; turn
+        them off with "on": False instead.
+        """
+        if not schedules:
+            raise ValueError("The appliance ignores an empty wake schedule list")
+        logger.info("Setting %d wake schedule(s) for %s", len(schedules), serial)
+        return await self.set_coffee_params(serial, {"cfg": {"wake_schedule": schedules}})
+
+    async def set_wake_schedule(
+        self,
+        serial: str,
+        cron: str,
+        enabled: bool = True,
+        existing: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add or update a wake schedule using cron format (e.g., "20 6 * * 1-5" for 6:20 AM weekdays).
+
+        The appliance keeps a list of schedules and this call replaces it, so
+        pass the current schedules as ``existing`` to keep them.
+        """
+        logger.info("Setting wake schedule '%s' (enabled=%s) for %s", cron, enabled, serial)
+        return await self.set_wake_schedules(
+            serial, merge_wake_schedule(existing or [], cron, enabled)
+        )
+
+    async def disable_wake_schedule(
+        self,
+        serial: str,
+        existing: list[dict[str, Any]],
+        cron: str | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Turn off the given wake schedules (or only the one matching ``cron``).
+
+        Returns None without a request if there is nothing to disable.
+        """
+        schedules = [
+            {**s, "on": False} if cron is None or s.get("cron") == cron else dict(s)
+            for s in existing
+        ]
+        if not schedules:
+            return None
+        logger.info("Disabling wake schedule %s for %s", cron or "(all)", serial)
+        return await self.set_wake_schedules(serial, schedules)
 
     # The setters below remain disabled until confirmed supported.
     #

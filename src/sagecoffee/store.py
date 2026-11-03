@@ -8,6 +8,7 @@ from typing import Any
 
 import tomli_w
 
+from sagecoffee.http_api import DEFAULT_APP
 from sagecoffee.models import TokenSet
 
 # Default config path
@@ -29,7 +30,6 @@ ENV_ACCESS_TOKEN = f"{ENV_PREFIX}ACCESS_TOKEN"
 # Defaults
 DEFAULT_CLIENT_ID = "gSo1NuhsGPs5J2e5zyw0oGaSqdqsq2vc"
 DEFAULT_MODEL = "BES995"
-DEFAULT_APP = "sageCoffee"
 
 
 class ConfigStore:

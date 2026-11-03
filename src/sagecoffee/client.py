@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 from sagecoffee.auth import AuthClient
@@ -287,8 +288,27 @@ class SageCoffeeClient:
 
         Returns:
             TokenSet with tokens
+
+        Raises:
+            MfaRequiredError: If the account needs a one-time code (see bootstrap_mfa)
         """
         tokens = await self._auth_client.password_realm_login(username, password)
+        self._token_manager.tokens = tokens
+        logger.info("Bootstrap successful")
+        return tokens
+
+    async def bootstrap_mfa(self, mfa_token: str, otp: str) -> TokenSet:
+        """
+        Complete a bootstrap for an account with MFA enabled.
+
+        Args:
+            mfa_token: The token from the MfaRequiredError raised by bootstrap
+            otp: The one-time code from the user's authenticator app
+
+        Returns:
+            TokenSet with tokens
+        """
+        tokens = await self._auth_client.mfa_otp_login(mfa_token, otp)
         self._token_manager.tokens = tokens
         logger.info("Bootstrap successful")
         return tokens
@@ -448,22 +468,52 @@ class SageCoffeeClient:
         api = self._get_api_client()
         return await api.set_work_light_brightness(appliance.serial_number, brightness)
 
+    async def get_wake_schedule(self, serial: str | None = None) -> list[dict[str, Any]]:
+        """Get the current wake schedules, e.g. [{"cron": "20 6 * * 1-5", "on": True}]."""
+        state = await self.fetch_state(serial)
+        return state.wake_schedule
+
+    async def set_wake_schedules(
+        self,
+        schedules: list[dict[str, Any]],
+        serial: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace the full list of wake schedules (must not be empty)."""
+        appliance = await self.get_appliance(serial)
+        api = self._get_api_client()
+        return await api.set_wake_schedules(appliance.serial_number, schedules)
+
     async def set_wake_schedule(
         self,
         cron: str,
         enabled: bool = True,
         serial: str | None = None,
     ) -> dict[str, Any]:
-        """Set wake schedule using cron format (e.g., "20 6 * * 1-5")."""
-        appliance = await self.get_appliance(serial)
-        api = self._get_api_client()
-        return await api.set_wake_schedule(appliance.serial_number, cron, enabled)
+        """
+        Add or update a wake schedule using cron format (e.g., "20 6 * * 1-5").
 
-    async def disable_wake_schedule(self, serial: str | None = None) -> dict[str, Any]:
-        """Disable the wake schedule."""
+        Existing schedules are kept; one with the same cron is updated.
+        """
         appliance = await self.get_appliance(serial)
+        existing = await self.get_wake_schedule(appliance.serial_number)
         api = self._get_api_client()
-        return await api.disable_wake_schedule(appliance.serial_number)
+        return await api.set_wake_schedule(appliance.serial_number, cron, enabled, existing)
+
+    async def disable_wake_schedule(
+        self,
+        serial: str | None = None,
+        cron: str | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Turn off all wake schedules, or only the one matching ``cron``.
+
+        The schedules are kept so they can be turned on again.
+        Returns None if there were no schedules to disable.
+        """
+        appliance = await self.get_appliance(serial)
+        existing = await self.get_wake_schedule(appliance.serial_number)
+        api = self._get_api_client()
+        return await api.disable_wake_schedule(appliance.serial_number, existing, cron)
 
     # The methods below remain disabled until confirmed supported.
     #
@@ -571,6 +621,43 @@ class SageCoffeeClient:
         if self._ws_client:
             return self._ws_client.get_last_state(serial)
         return None
+
+    async def fetch_state(self, serial: str | None = None, timeout: float = 15.0) -> DeviceState:
+        """
+        Get the current state for an appliance, waiting for one if needed.
+
+        Returns the last known state if the state stream already delivered
+        one. Otherwise, if a state stream is running, waits for it to deliver
+        a state; if not, opens one for this appliance.
+
+        Args:
+            serial: Appliance serial (auto-selects if only one appliance)
+            timeout: Seconds to wait for a state report
+
+        Raises:
+            TimeoutError: If no state arrives in time
+        """
+        appliance = await self.get_appliance(serial)
+        serial = appliance.serial_number
+
+        state = self.get_last_state(serial)
+        if state is not None:
+            return state
+
+        async with asyncio.timeout(timeout):
+            if self._ws_client is not None:
+                # Someone else is consuming the stream; wait for it to deliver.
+                while (state := self.get_last_state(serial)) is None:
+                    await asyncio.sleep(0.2)
+                return state
+
+            ws = await self.connect_state_stream(serial)
+            async with aclosing(ws.listen_states()) as states:
+                async for state in states:
+                    if state.serial_number == serial:
+                        return state
+
+        raise TimeoutError(f"No state received for {serial}")
 
     # Context manager
 

@@ -3,7 +3,7 @@
 import asyncio
 import json
 import random
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import websockets
@@ -414,7 +414,9 @@ class BrevilleWsClient:
             await self._cancel_ping_task()
             await self._close_ws()
 
-    async def listen_states(self, auto_reconnect: bool = True) -> AsyncIterator[DeviceState]:
+    async def listen_states(
+        self, auto_reconnect: bool = True
+    ) -> AsyncGenerator[DeviceState, None]:
         """
         Listen for state updates only.
 

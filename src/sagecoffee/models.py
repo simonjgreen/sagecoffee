@@ -86,12 +86,17 @@ class StateReport(BaseModel):
     version: int | None = None
 
 
+BOILER_ROLE_BREW = "brew"
+BOILER_ROLE_STEAM = "steam"
+
+
 class BoilerState(BaseModel):
     """State of a boiler."""
 
     id: str
     current_temp: float | None = None
     target_temp: float | None = None
+    role: str | None = None
 
 
 class DeviceState(BaseModel):
@@ -122,21 +127,84 @@ class DeviceState(BaseModel):
         return self.desired.get("state")
 
     @property
+    def cfg_default(self) -> dict[str, Any]:
+        """Get the default config block (reported as nested or dotted key)."""
+        cfg = self.reported.get("cfg", {})
+        nested = cfg.get("default") if isinstance(cfg, dict) else None
+        if isinstance(nested, dict) and nested:
+            return nested
+        cfg_default = self.reported.get("cfg.default", {})
+        return cfg_default if isinstance(cfg_default, dict) else {}
+
+    @property
     def boiler_temps(self) -> list[BoilerState]:
-        """Get boiler temperatures."""
-        boilers = []
+        """
+        Get boiler temperatures.
+
+        Dual boiler machines report the steam boiler at index 0 and the brew
+        boiler at index 1. Single boiler machines report only a brew boiler,
+        at index 0.
+        """
         boiler_data = self.reported.get("boiler", [])
-        if isinstance(boiler_data, list):
-            for i, boiler in enumerate(boiler_data):
-                if isinstance(boiler, dict):
-                    boilers.append(
-                        BoilerState(
-                            id=str(i),
-                            current_temp=boiler.get("cur_temp"),
-                            target_temp=boiler.get("temp_sp"),
-                        )
-                    )
-        return boilers
+        if not isinstance(boiler_data, list):
+            return []
+        entries = [(i, b) for i, b in enumerate(boiler_data) if isinstance(b, dict)]
+        if len(boiler_data) == 1:
+            roles = {0: BOILER_ROLE_BREW}
+        else:
+            roles = {0: BOILER_ROLE_STEAM, 1: BOILER_ROLE_BREW}
+        return [
+            BoilerState(
+                id=str(i),
+                current_temp=boiler.get("cur_temp"),
+                target_temp=boiler.get("temp_sp"),
+                role=roles.get(i),
+            )
+            for i, boiler in entries
+        ]
+
+    @property
+    def is_single_boiler(self) -> bool:
+        """Check if the machine reports exactly one boiler."""
+        boiler_data = self.reported.get("boiler")
+        return isinstance(boiler_data, list) and len(boiler_data) == 1
+
+    @property
+    def brew_boiler(self) -> BoilerState | None:
+        """Get the brew boiler, if reported."""
+        return next((b for b in self.boiler_temps if b.role == BOILER_ROLE_BREW), None)
+
+    @property
+    def steam_boiler(self) -> BoilerState | None:
+        """Get the steam boiler (dual boiler machines only)."""
+        return next((b for b in self.boiler_temps if b.role == BOILER_ROLE_STEAM), None)
+
+    @property
+    def wake_schedule(self) -> list[dict[str, Any]]:
+        """Get the wake schedules, e.g. [{"cron": "20 6 * * 1-5", "on": True}]."""
+        schedule = self.cfg_default.get("wake_schedule")
+        if not isinstance(schedule, list):
+            return []
+        return [dict(s) for s in schedule if isinstance(s, dict)]
+
+    @property
+    def errors(self) -> list[str]:
+        """Get the reported appliance error names (e.g. "WaterTankEmpty")."""
+        errors = self.reported.get("errors")
+        if not isinstance(errors, list):
+            return []
+        return [str(e) for e in errors]
+
+    @property
+    def signal_strength(self) -> int | float | None:
+        """Get the reported Wi-Fi signal strength."""
+        return self.reported.get("signal_strength")
+
+    @property
+    def firmware(self) -> dict[str, Any]:
+        """Get the reported firmware versions."""
+        firmware = self.reported.get("firmware")
+        return firmware if isinstance(firmware, dict) else {}
 
     @property
     def grind_size(self) -> int | None:
@@ -148,19 +216,12 @@ class DeviceState(BaseModel):
     @property
     def is_remote_wake_enabled(self) -> bool:
         """Check if remote wake is enabled."""
-        cfg = self.reported.get("cfg.default", {})
-        if isinstance(cfg, dict):
-            return bool(cfg.get("remote_wake_enable"))
-        # Try alternate path
-        return bool(self.reported.get("cfg", {}).get("default", {}).get("remote_wake_enable"))
+        return bool(self.cfg_default.get("remote_wake_enable"))
 
     @property
     def timezone(self) -> str | None:
         """Get the configured timezone."""
-        cfg = self.reported.get("cfg.default", {})
-        if isinstance(cfg, dict):
-            return cfg.get("timezone")
-        return self.reported.get("cfg", {}).get("default", {}).get("timezone")
+        return self.cfg_default.get("timezone")
 
     @classmethod
     def from_state_report(cls, report: StateReport) -> "DeviceState":
