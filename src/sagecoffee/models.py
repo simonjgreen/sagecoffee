@@ -216,6 +216,9 @@ class DeviceState(BaseModel):
     @property
     def is_remote_wake_enabled(self) -> bool:
         """Check if remote wake is enabled."""
+        pairing = self.reported.get("pairing")
+        if isinstance(pairing, dict) and "remote_wake" in pairing:
+            return bool(pairing["remote_wake"])
         return bool(self.cfg_default.get("remote_wake_enable"))
 
     @property

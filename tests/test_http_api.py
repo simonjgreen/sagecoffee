@@ -13,6 +13,7 @@ from sagecoffee.http_api import (
     BrevilleApiClient,
     SyncBrevilleApiClient,
     merge_wake_schedule,
+    same_cron,
 )
 from sagecoffee.models import Appliance, DeviceState
 from tests.mocks.http_mock import create_mock_client
@@ -571,7 +572,7 @@ class TestBrevilleApiClient:
             http_client=http_client,
         )
 
-        existing = [{"cron": "20 6 * * 1-5", "on": True}, {"cron": "0 8 * * 6,7", "on": True}]
+        existing = [{"cron": "20 6 * * 1-5", "on": True}, {"cron": "00 8 * * 6,7", "on": True}]
         await client.disable_wake_schedule("ABC123", existing, cron="0 8 * * 6,7")
 
         import json
@@ -579,7 +580,7 @@ class TestBrevilleApiClient:
         body = json.loads(captured_body)
         assert body["cfg"]["wake_schedule"] == [
             {"cron": "20 6 * * 1-5", "on": True},
-            {"cron": "0 8 * * 6,7", "on": False},
+            {"cron": "00 8 * * 6,7", "on": False},
         ]
 
     @pytest.mark.asyncio
@@ -625,6 +626,40 @@ class TestMergeWakeSchedule:
             {"cron": "0 8 * * 6,7", "on": True},
             {"cron": "20 6 * * 1-5", "on": True},
         ]
+
+
+    def test_matches_app_zero_padded_cron(self) -> None:
+        """Test that the app's zero-padded cron matches an unpadded one."""
+        # Shape reported by a BES995 for schedules created in the app.
+        existing = [{"cron": "00 7 * * 1", "on": False}, {"cron": "00 7 * * 2", "on": False}]
+
+        merged = merge_wake_schedule(existing, "0 7 * * 1", enabled=True)
+
+        assert merged == [
+            {"cron": "00 7 * * 1", "on": True},
+            {"cron": "00 7 * * 2", "on": False},
+        ]
+
+
+class TestSameCron:
+    """Tests for same_cron."""
+
+    @pytest.mark.parametrize(
+        ("a", "b", "expected"),
+        [
+            ("00 7 * * 1", "0 7 * * 1", True),
+            ("05 07 * * 1-5", "5 7 * * 1-5", True),
+            ("0 7 * * 1,02", "0 7 * * 1,2", True),
+            ("0  7 * * 1", "0 7 * * 1", True),
+            ("0 7 * * 1", "0 7 * * 2", False),
+            ("0 7 * * 1", None, False),
+            (None, None, False),
+            ("", "", False),
+        ],
+    )
+    def test_same_cron(self, a: Any, b: Any, expected: bool) -> None:
+        """Test cron comparison ignores zero padding and extra whitespace."""
+        assert same_cron(a, b) is expected
 
 
 class TestSyncBrevilleApiClient:

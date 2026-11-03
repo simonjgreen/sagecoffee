@@ -1,6 +1,7 @@
 """REST API client for Breville/Sage appliances."""
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import quote
@@ -27,18 +28,35 @@ APPS = (APP_SAGE, APP_BREVILLE, APP_LELIT)
 DEFAULT_APP = APP_SAGE
 
 
+def _cron_key(cron: Any) -> tuple[str, ...]:
+    """Normalise a cron expression for comparison ("00 7 * * 1" == "0 7 * * 1")."""
+    if not isinstance(cron, str):
+        return ()
+    return tuple(re.sub(r"\d+", lambda m: str(int(m.group())), f) for f in cron.split())
+
+
+def same_cron(a: Any, b: Any) -> bool:
+    """Check if two cron expressions describe the same schedule.
+
+    The app writes zero-padded fields (e.g. "00 7 * * 1"), so a plain string
+    comparison would miss schedules created there.
+    """
+    key = _cron_key(a)
+    return bool(key) and key == _cron_key(b)
+
+
 def merge_wake_schedule(
     schedules: list[dict[str, Any]], cron: str, enabled: bool = True
 ) -> list[dict[str, Any]]:
     """
     Add or update one entry in a list of wake schedules.
 
-    An entry with the same cron is updated in place, otherwise a new entry is
-    appended. The input list is not modified.
+    An entry with the same cron (see same_cron) is updated in place, otherwise
+    a new entry is appended. The input list is not modified.
     """
     merged = [dict(s) for s in schedules]
     for entry in merged:
-        if entry.get("cron") == cron:
+        if same_cron(entry.get("cron"), cron):
             entry["on"] = enabled
             return merged
     merged.append({"cron": cron, "on": enabled})
@@ -351,7 +369,7 @@ class BrevilleApiClient:
         Returns None without a request if there is nothing to disable.
         """
         schedules = [
-            {**s, "on": False} if cron is None or s.get("cron") == cron else dict(s)
+            {**s, "on": False} if cron is None or same_cron(s.get("cron"), cron) else dict(s)
             for s in existing
         ]
         if not schedules:

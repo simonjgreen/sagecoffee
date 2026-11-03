@@ -227,6 +227,35 @@ class TestDeviceState:
         assert state.is_remote_wake_enabled is True
 
 
+    def test_remote_wake_prefers_pairing(self) -> None:
+        """Test pairing.remote_wake wins over cfg.default (BES995 firmware 2.11.3 shape)."""
+        state = DeviceState(
+            raw_data={
+                "reported": {
+                    "pairing": {"remote_wake": True, "last_paired": 1773334609626},
+                    "cfg": {"default": {"timezone": "Europe/Brussels"}},
+                }
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.is_remote_wake_enabled is True
+
+    def test_remote_wake_disabled_in_pairing(self) -> None:
+        """Test an explicit pairing.remote_wake False is respected."""
+        state = DeviceState(
+            raw_data={
+                "reported": {
+                    "pairing": {"remote_wake": False},
+                    "cfg": {"default": {"remote_wake_enable": True}},
+                }
+            },
+            serial_number="ABC123",
+        )
+
+        assert state.is_remote_wake_enabled is False
+
+
 class TestMessages:
     """Tests for WebSocket message models."""
 
